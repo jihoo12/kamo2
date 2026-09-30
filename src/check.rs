@@ -132,15 +132,23 @@ impl Engine<'_> {
             }
             _ => {
                 let got = self.infer(t, ctx)?;
-                if self.conv(got, ty, None, ctx.face)? {
+                if self.compatible(got, ty, ctx.face)? {
                     Ok(())
                 } else {
-                    Err(self.error(
-                        t,
-                        "type mismatch (universe levels are explicit and non-cumulative)",
-                    ))
+                    Err(self.error(t, "type mismatch"))
                 }
             }
+        }
+    }
+    fn compatible(&mut self, got: ValId, expected: ValId, face: FaceId) -> Result<bool> {
+        if self.conv(got, expected, None, face)? {
+            return Ok(true);
+        }
+        let got = self.force(got, face)?;
+        let expected = self.force(expected, face)?;
+        match (self.get(got), self.get(expected)) {
+            (Val::U(i), Val::U(j)) => Ok(i <= j),
+            _ => Ok(false),
         }
     }
     fn infer(&mut self, t: TermId, ctx: &Context) -> Result<ValId> {
