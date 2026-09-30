@@ -36,8 +36,7 @@ impl Elaborator {
         let ty = self.term(ty_expr)?;
         let body = self.term_expected(&declaration.value, Some(ty_expr))?;
         let index = self.core.decls.len();
-        self.core
-            .push_decl(declaration.name.clone(), ty, body);
+        self.core.push_decl(declaration.name.clone(), ty, body);
         self.globals.insert(declaration.name.clone(), index);
         self.global_types
             .insert(declaration.name.clone(), ty_expr.clone());
