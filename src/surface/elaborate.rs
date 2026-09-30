@@ -167,6 +167,93 @@ impl Elaborator {
         Ok(())
     }
 
+    fn lambda_n(&mut self, mut body: TermId, count: usize) -> TermId {
+        for _ in 0..count {
+            body = self.core.alloc(Term::Lam(body), 0);
+        }
+        body
+    }
+
+    fn lower_match(
+        &mut self,
+        scrutinee: &Expr,
+        branches: &[super::ast::MatchBranch],
+        expected: &Expr,
+    ) -> Result<TermId> {
+        let inductive = self.validate_constructor_branches(branches)?;
+        let scrutinee_ty = self.infer(scrutinee)?;
+        let (scrutinee_family, parameter_exprs, index_exprs) =
+            self.inductive_application(&scrutinee_ty)?;
+        if inductive != scrutinee_family {
+            return Err(Error::plain(
+                "match branches do not belong to the scrutinee inductive family",
+            ));
+        }
+
+        let declaration = self.core.inductives[inductive.index()].clone();
+        let parameters = parameter_exprs
+            .iter()
+            .map(|parameter| self.term(parameter))
+            .collect::<Result<Vec<_>>>()?;
+        let indices = index_exprs
+            .iter()
+            .map(|index| self.term(index))
+            .collect::<Result<Vec<_>>>()?;
+        let scrutinee = self.term_expected(scrutinee, Some(&scrutinee_ty))?;
+
+        let motive_body = self.term(expected)?;
+        let motive = self.lambda_n(motive_body, declaration.indices.len() + 1);
+
+        let mut methods = Vec::with_capacity(declaration.constructors.len());
+        for constructor_id in &declaration.constructors {
+            let constructor = self.core.constructors[constructor_id.index()].clone();
+            let branch = branches
+                .iter()
+                .find(|branch| match &branch.pattern {
+                    Pattern::Constructor { name, .. } => name == &constructor.name,
+                    Pattern::Name(_) => false,
+                })
+                .ok_or_else(|| Error::plain("validated match branch disappeared"))?;
+            let Pattern::Constructor { arguments, .. } = &branch.pattern else {
+                unreachable!("validated constructor pattern");
+            };
+
+            let mut pushed = 0;
+            for (argument, entry) in arguments.iter().zip(&constructor.arguments) {
+                let Pattern::Name(name) = argument else {
+                    return Err(Error::plain("nested constructor patterns are not supported yet"));
+                };
+                let ty = self.surface_type(entry.ty)?;
+                self.locals.push((name.clone(), ty));
+                pushed += 1;
+                if constructor.recursive_arguments.contains(&(pushed - 1)) {
+                    self.locals.push((
+                        format!("<ih:{}>", name),
+                        expected.clone(),
+                    ));
+                    pushed += 1;
+                }
+            }
+            let body = self.term_expected(&branch.body, Some(expected));
+            for _ in 0..pushed {
+                self.locals.pop();
+            }
+            methods.push(self.lambda_n(body?, pushed));
+        }
+
+        Ok(self.core.alloc(
+            Term::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            },
+            0,
+        ))
+    }
+
     fn term(&mut self, expr: &Expr) -> Result<TermId> {
         self.term_expected(expr, None)
     }
@@ -270,17 +357,10 @@ impl Elaborator {
                 scrutinee,
                 branches,
             } => {
-                let branch_family = self.validate_constructor_branches(branches)?;
-                let scrutinee_ty = self.infer(scrutinee)?;
-                let (scrutinee_family, _, _) = self.inductive_application(&scrutinee_ty)?;
-                if branch_family != scrutinee_family {
-                    return Err(Error::plain(
-                        "match branches do not belong to the scrutinee inductive family",
-                    ));
-                }
-                return Err(Error::plain(
-                    "surface match is reserved until pattern elaboration is implemented",
-                ));
+                let expected = expected.ok_or_else(|| {
+                    Error::plain("cannot infer surface match result type yet")
+                })?;
+                return self.lower_match(scrutinee, branches, expected);
             }
         };
         Ok(self.core.alloc(term, 0))
