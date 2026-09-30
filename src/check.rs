@@ -731,3 +731,80 @@ impl Engine<'_> {
         }
     }
 }
+
+
+#[cfg(test)]
+mod inductive_core_tests {
+    use super::*;
+    use crate::syntax::{Program, TelescopeEntry};
+
+    fn entry(program: &mut Program, name: &str, ty: Term) -> TelescopeEntry {
+        TelescopeEntry {
+            name: name.to_owned(),
+            ty: program.alloc(ty, 0),
+        }
+    }
+
+    fn check_all(program: &Program) -> Result<()> {
+        for index in 0..program.decls.len() {
+            let mut engine = Engine::new(program, true, 100_000, 50_000);
+            engine.check_declaration(index)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn checks_recursive_nat_family_and_constructors() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![]);
+        let pred = entry(&mut program, "pred", Term::Inductive(nat));
+        let suc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![]);
+
+        let nat_ty = program.alloc(Term::Inductive(nat), 0);
+        let zero_term = program.alloc(Term::Constructor(zero), 0);
+        program.push_decl("z".to_owned(), nat_ty, zero_term);
+
+        let nat_ty = program.alloc(Term::Inductive(nat), 0);
+        let suc_term = program.alloc(Term::Constructor(suc), 0);
+        let zero_term = program.alloc(Term::Constructor(zero), 0);
+        let one = program.alloc(Term::App(suc_term, zero_term), 0);
+        program.push_decl("one".to_owned(), nat_ty, one);
+
+        check_all(&program).unwrap();
+    }
+
+    #[test]
+    fn checks_indexed_vec_nil_constructor() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat_ty = program.alloc(Term::Nat, 0);
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+        let zero_index = program.alloc(Term::Zero, 0);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index]);
+
+        let vec_head = program.alloc(Term::Inductive(vec), 0);
+        let bool_ty = program.alloc(Term::Bool, 0);
+        let vec_bool = program.alloc(Term::App(vec_head, bool_ty), 0);
+        let zero = program.alloc(Term::Zero, 0);
+        let expected = program.alloc(Term::App(vec_bool, zero), 0);
+
+        let nil_head = program.alloc(Term::Constructor(nil), 0);
+        let bool_arg = program.alloc(Term::Bool, 0);
+        let body = program.alloc(Term::App(nil_head, bool_arg), 0);
+        program.push_decl("nil-bool".to_owned(), expected, body);
+
+        check_all(&program).unwrap();
+    }
+}
