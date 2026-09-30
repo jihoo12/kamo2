@@ -239,13 +239,8 @@ impl Engine<'_> {
                     .into_iter()
                     .zip(declaration.constructors.iter().copied())
                 {
-                    let method_type = self.generic_method_type(
-                        inductive,
-                        constructor,
-                        &parameters,
-                        motive,
-                        face,
-                    )?;
+                    let method_type =
+                        self.generic_method_type(constructor, &parameters, motive, face)?;
                     method_terms.push(self.quote_inner(method, Some(method_type), face, n)?);
                 }
                 let mut index_terms = Vec::with_capacity(indices.len());
