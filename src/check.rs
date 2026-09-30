@@ -756,9 +756,9 @@ mod inductive_core_tests {
     fn checks_recursive_nat_family_and_constructors() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![]);
+        let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred = entry(&mut program, "pred", Term::Inductive(nat));
-        let suc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![]);
+        let suc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
 
         let nat_ty = program.alloc(Term::Inductive(nat), 0);
         let zero_term = program.alloc(Term::Constructor(zero), 0);
@@ -791,7 +791,7 @@ mod inductive_core_tests {
             }],
         );
         let zero_index = program.alloc(Term::Zero, 0);
-        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index]);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
 
         let vec_head = program.alloc(Term::Inductive(vec), 0);
         let bool_ty = program.alloc(Term::Bool, 0);
