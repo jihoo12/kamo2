@@ -224,7 +224,6 @@ impl Engine<'_> {
                     .zip(declaration.constructors.iter().copied())
                 {
                     let method_type = self.generic_method_type(
-                        inductive,
                         constructor,
                         &parameter_values,
                         motive_value,
@@ -524,7 +523,6 @@ impl Engine<'_> {
     }
     pub(crate) fn generic_method_type(
         &mut self,
-        inductive: crate::syntax::InductiveId,
         constructor_id: crate::syntax::ConstructorId,
         parameters: &[ValId],
         motive: ValId,
