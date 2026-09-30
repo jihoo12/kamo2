@@ -1,3 +1,4 @@
+use crate::arena::Key;
 use crate::eval::{Binder, Engine, Env, EnvId, Val, ValId};
 use crate::face::{Dim, FaceId};
 use crate::syntax::{Term, TermId};
@@ -166,6 +167,78 @@ impl Engine<'_> {
             Term::Bool | Term::Nat => Val::U(0),
             Term::Inductive(id) => return Ok(self.inductive_type(id)),
             Term::Constructor(id) => return Ok(self.constructor_type(id)),
+            Term::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let declaration = self.program.inductives[inductive.index()].clone();
+                if parameters.len() != declaration.parameters.len() {
+                    return Err(self.error(t, "wrong number of inductive parameters"));
+                }
+                if indices.len() != declaration.indices.len() {
+                    return Err(self.error(t, "wrong number of inductive indices"));
+                }
+                if methods.len() != declaration.constructors.len() {
+                    return Err(self.error(t, "wrong number of eliminator methods"));
+                }
+
+                let mut family = self.alloc(Val::Inductive(inductive));
+                let mut parameter_values = Vec::with_capacity(parameters.len());
+                for parameter in parameters {
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed inductive parameter telescope"));
+                    };
+                    self.check(parameter, domain, ctx)?;
+                    let parameter = self.thunk(parameter, ctx.env);
+                    parameter_values.push(parameter);
+                    family = self.app(family, parameter);
+                }
+
+                let mut index_values = Vec::with_capacity(indices.len());
+                for index in indices {
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed inductive index telescope"));
+                    };
+                    self.check(index, domain, ctx)?;
+                    let index = self.thunk(index, ctx.env);
+                    index_values.push(index);
+                    family = self.app(family, index);
+                }
+                self.check(scrutinee, family, ctx)?;
+
+                let motive_type =
+                    self.generic_motive_type(inductive, &parameter_values, declaration.universe);
+                self.check(motive, motive_type, ctx)?;
+                let motive_value = self.thunk(motive, ctx.env);
+
+                for (method, constructor) in methods
+                    .into_iter()
+                    .zip(declaration.constructors.iter().copied())
+                {
+                    let method_type = self.generic_method_type(
+                        constructor,
+                        &parameter_values,
+                        motive_value,
+                        ctx.face,
+                    )?;
+                    self.check(method, method_type, ctx)?;
+                }
+
+                let mut result = motive_value;
+                for index in index_values {
+                    result = self.app(result, index);
+                }
+                let scrutinee = self.thunk(scrutinee, ctx.env);
+                return Ok(self.app(result, scrutinee));
+            }
             Term::True | Term::False => Val::Bool,
             Term::Zero => Val::Nat,
             Term::Suc(n) => {
@@ -448,6 +521,152 @@ impl Engine<'_> {
         };
         Ok(self.alloc(ty))
     }
+    pub(crate) fn generic_method_type(
+        &mut self,
+        constructor_id: crate::syntax::ConstructorId,
+        parameters: &[ValId],
+        motive: ValId,
+        face: FaceId,
+    ) -> Result<ValId> {
+        let constructor = self.program.constructors[constructor_id.index()].clone();
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_generic_method_arguments(&constructor, parameters, motive, face, 0, env)
+    }
+
+    fn bind_generic_method_arguments(
+        &mut self,
+        constructor: &crate::syntax::ConstructorDecl,
+        parameters: &[ValId],
+        motive: ValId,
+        face: FaceId,
+        index: usize,
+        env: EnvId,
+    ) -> Result<ValId> {
+        let parameter_count = parameters.len();
+        if index == constructor.arguments.len() {
+            let values = self.environment(env).terms;
+            let mut constructor_value = self.alloc(Val::Constructor(constructor.id));
+            for parameter in parameters {
+                constructor_value = self.app(constructor_value, *parameter);
+            }
+            for argument in values.iter().skip(parameter_count) {
+                constructor_value = self.app(constructor_value, *argument);
+            }
+            let mut result = motive;
+            for result_index in &constructor.result_indices {
+                let value = self.thunk(*result_index, env);
+                result = self.app(result, value);
+            }
+            return Ok(self.app(result, constructor_value));
+        }
+
+        let domain = self.thunk(constructor.arguments[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+
+        let mut body = self.bind_generic_method_arguments(
+            constructor,
+            parameters,
+            motive,
+            face,
+            index + 1,
+            next,
+        )?;
+
+        if constructor.recursive_arguments.contains(&index) {
+            let Some((recursive_family, application)) = self.inductive_application(domain, face)?
+            else {
+                return Err(Error::plain(
+                    "recursive constructor argument is not an inductive family",
+                ));
+            };
+            if recursive_family != constructor.inductive || application.len() < parameter_count {
+                return Err(Error::plain(
+                    "recursive constructor argument has the wrong inductive family",
+                ));
+            }
+            let mut ih_type = motive;
+            for recursive_index in application.iter().skip(parameter_count) {
+                ih_type = self.app(ih_type, *recursive_index);
+            }
+            ih_type = self.app(ih_type, value);
+            let ih = self.fresh_term();
+            body = self.alloc(Val::Pi(ih_type, Binder { var: ih, body }));
+        }
+
+        Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
+    }
+
+    pub(crate) fn generic_motive_type(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        parameters: &[ValId],
+        universe: u32,
+    ) -> ValId {
+        let declaration = self.program.inductives[inductive.index()].clone();
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_generic_motive_indices(
+            inductive,
+            parameters,
+            &declaration.indices,
+            0,
+            env,
+            universe,
+        )
+    }
+
+    fn bind_generic_motive_indices(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        parameters: &[ValId],
+        indices: &[crate::syntax::TelescopeEntry],
+        index: usize,
+        env: EnvId,
+        universe: u32,
+    ) -> ValId {
+        if index == indices.len() {
+            let values = self.environment(env).terms;
+            let mut family = self.alloc(Val::Inductive(inductive));
+            for parameter in parameters {
+                family = self.app(family, *parameter);
+            }
+            for value in values.iter().skip(parameters.len()) {
+                family = self.app(family, *value);
+            }
+            let scrutinee = self.fresh_term();
+            let codomain = self.alloc(Val::U(universe));
+            return self.alloc(Val::Pi(
+                family,
+                Binder {
+                    var: scrutinee,
+                    body: codomain,
+                },
+            ));
+        }
+        let domain = self.thunk(indices[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+        let body = self.bind_generic_motive_indices(
+            inductive,
+            parameters,
+            indices,
+            index + 1,
+            next,
+            universe,
+        );
+        self.alloc(Val::Pi(domain, Binder { var, body }))
+    }
+
     fn check_motive(&mut self, p: TermId, domain: ValId, ctx: &Context) -> Result<()> {
         // A syntactic lambda is permitted here without a universe annotation.
         if let Term::Lam(body) = self.program.terms.get(p).term {
@@ -756,9 +975,9 @@ mod inductive_core_tests {
     fn checks_recursive_nat_family_and_constructors() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![]);
+        let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred = entry(&mut program, "pred", Term::Inductive(nat));
-        let suc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![]);
+        let suc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
 
         let nat_ty = program.alloc(Term::Inductive(nat), 0);
         let zero_term = program.alloc(Term::Constructor(zero), 0);
@@ -769,6 +988,133 @@ mod inductive_core_tests {
         let zero_term = program.alloc(Term::Constructor(zero), 0);
         let one = program.alloc(Term::App(suc_term, zero_term), 0);
         program.push_decl("one".to_owned(), nat_ty, one);
+
+        check_all(&program).unwrap();
+    }
+
+    #[test]
+    fn checks_recursive_nat_eliminator() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred = entry(&mut program, "pred", Term::Inductive(nat));
+        let usuc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let nat_result = program.alloc(Term::Nat, 0);
+        let motive = program.alloc(Term::Lam(nat_result), 0);
+        let zero_method = program.alloc(Term::Zero, 0);
+        let ih = program.alloc(Term::Var(0), 0);
+        let suc_ih = program.alloc(Term::Suc(ih), 0);
+        let suc_ih = program.alloc(Term::Lam(suc_ih), 0);
+        let suc_method = program.alloc(Term::Lam(suc_ih), 0);
+
+        let usuc_head = program.alloc(Term::Constructor(usuc), 0);
+        let uzero_term = program.alloc(Term::Constructor(uzero), 0);
+        let one = program.alloc(Term::App(usuc_head, uzero_term), 0);
+        let elim = program.alloc(
+            Term::Elim {
+                inductive: nat,
+                parameters: vec![],
+                motive,
+                methods: vec![zero_method, suc_method],
+                indices: vec![],
+                scrutinee: one,
+            },
+            0,
+        );
+        let expected = program.alloc(Term::Nat, 0);
+        program.push_decl("fold-one".to_owned(), expected, elim);
+
+        check_all(&program).unwrap();
+    }
+
+    #[test]
+    fn checks_dependent_vec_eliminator() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat_ty = program.alloc(Term::Nat, 0);
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+
+        let zero_index = program.alloc(Term::Zero, 0);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+
+        let n_arg = entry(&mut program, "n", Term::Nat);
+        let a_var = program.alloc(Term::Var(1), 0);
+        let head_arg = TelescopeEntry {
+            name: "head".to_owned(),
+            ty: a_var,
+        };
+        let vec_head = program.alloc(Term::Inductive(vec), 0);
+        let a_var = program.alloc(Term::Var(2), 0);
+        let vec_a = program.alloc(Term::App(vec_head, a_var), 0);
+        let n_var = program.alloc(Term::Var(1), 0);
+        let vec_a_n = program.alloc(Term::App(vec_a, n_var), 0);
+        let tail_arg = TelescopeEntry {
+            name: "tail".to_owned(),
+            ty: vec_a_n,
+        };
+        let n_result = program.alloc(Term::Var(2), 0);
+        let suc_n = program.alloc(Term::Suc(n_result), 0);
+        let cons = program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![n_arg, head_arg, tail_arg],
+            vec![suc_n],
+            vec![2],
+        );
+
+        // P = λ n. λ xs. Nat
+        let motive_result = program.alloc(Term::Nat, 0);
+        let motive_xs = program.alloc(Term::Lam(motive_result), 0);
+        let motive = program.alloc(Term::Lam(motive_xs), 0);
+        let nil_method = program.alloc(Term::Zero, 0);
+
+        // cons_case = λ n. λ head. λ tail. λ ih. suc ih
+        let ih = program.alloc(Term::Var(0), 0);
+        let suc_ih = program.alloc(Term::Suc(ih), 0);
+        let cons_method = program.alloc(Term::Lam(suc_ih), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+
+        let bool_ty = program.alloc(Term::Bool, 0);
+        let cons_head = program.alloc(Term::Constructor(cons), 0);
+        let cons_bool = program.alloc(Term::App(cons_head, bool_ty), 0);
+        let zero = program.alloc(Term::Zero, 0);
+        let cons_zero = program.alloc(Term::App(cons_bool, zero), 0);
+        let true_term = program.alloc(Term::True, 0);
+        let cons_true = program.alloc(Term::App(cons_zero, true_term), 0);
+        let nil_head = program.alloc(Term::Constructor(nil), 0);
+        let bool_ty_arg = program.alloc(Term::Bool, 0);
+        let nil_bool = program.alloc(Term::App(nil_head, bool_ty_arg), 0);
+        let singleton = program.alloc(Term::App(cons_true, nil_bool), 0);
+
+        let bool_parameter = program.alloc(Term::Bool, 0);
+        let one_index = program.alloc(Term::Suc(zero), 0);
+        let elim = program.alloc(
+            Term::Elim {
+                inductive: vec,
+                parameters: vec![bool_parameter],
+                motive,
+                methods: vec![nil_method, cons_method],
+                indices: vec![one_index],
+                scrutinee: singleton,
+            },
+            0,
+        );
+        let expected = program.alloc(Term::Nat, 0);
+        program.push_decl("vec-length-one".to_owned(), expected, elim);
 
         check_all(&program).unwrap();
     }
@@ -791,7 +1137,7 @@ mod inductive_core_tests {
             }],
         );
         let zero_index = program.alloc(Term::Zero, 0);
-        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index]);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
 
         let vec_head = program.alloc(Term::Inductive(vec), 0);
         let bool_ty = program.alloc(Term::Bool, 0);

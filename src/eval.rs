@@ -53,6 +53,14 @@ pub(crate) enum Val {
     Nat,
     Inductive(InductiveId),
     Constructor(ConstructorId),
+    Elim {
+        inductive: InductiveId,
+        parameters: Vec<ValId>,
+        motive: ValId,
+        methods: Vec<ValId>,
+        indices: Vec<ValId>,
+        scrutinee: ValId,
+    },
     Zero,
     Suc(ValId),
     If(ValId, ValId, ValId, ValId),
@@ -429,6 +437,30 @@ impl<'a> Engine<'a> {
                 self.sub(b, s),
                 self.sub(c, s),
             ),
+            Val::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::Elim {
+                inductive,
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.sub(parameter, s))
+                    .collect(),
+                motive: self.sub(motive, s),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.sub(method, s))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.sub(index, s))
+                    .collect(),
+                scrutinee: self.sub(scrutinee, s),
+            },
             Val::PApp(p, d) => Val::PApp(self.sub(p, s), self.sub_dim(s, d)),
             Val::System(a, bs) => {
                 let a = self.sub(a, s);
@@ -508,6 +540,30 @@ impl<'a> Engine<'a> {
             Term::Nat => Val::Nat,
             Term::Inductive(id) => Val::Inductive(id),
             Term::Constructor(id) => Val::Constructor(id),
+            Term::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::Elim {
+                inductive,
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.thunk(parameter, e))
+                    .collect(),
+                motive: self.thunk(motive, e),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.thunk(method, e))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.thunk(index, e))
+                    .collect(),
+                scrutinee: self.thunk(scrutinee, e),
+            },
             Term::Zero => Val::Zero,
             Term::Pi(a, b) => {
                 let a = self.thunk(a, e);
@@ -695,6 +751,48 @@ impl<'a> Engine<'a> {
             (Val::Fst(x), Val::Fst(y))
             | (Val::Snd(x), Val::Snd(y))
             | (Val::Suc(x), Val::Suc(y)) => self.same(x, y, face, depth),
+            (
+                Val::Elim {
+                    inductive: i,
+                    parameters: ps,
+                    motive: p,
+                    methods: ms,
+                    indices: is,
+                    scrutinee: x,
+                },
+                Val::Elim {
+                    inductive: j,
+                    parameters: qs,
+                    motive: q,
+                    methods: ns,
+                    indices: js,
+                    scrutinee: y,
+                },
+            ) => {
+                if i != j || ps.len() != qs.len() || ms.len() != ns.len() || is.len() != js.len() {
+                    return Ok(false);
+                }
+                for (a, b) in ps.into_iter().zip(qs) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                if !self.same(p, q, face, depth)? {
+                    return Ok(false);
+                }
+                for (a, b) in ms.into_iter().zip(ns) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                for (a, b) in is.into_iter().zip(js) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                self.same(x, y, face, depth)
+            }
+
             (Val::PApp(p, i), Val::PApp(q, j)) => {
                 Ok(self.faces.equal(face, i, j)? && self.same(p, q, face, depth)?)
             }
@@ -839,6 +937,77 @@ impl<'a> Engine<'a> {
                         }
                         _ => None,
                     }
+                }
+                Val::Elim {
+                    inductive,
+                    parameters,
+                    motive,
+                    methods,
+                    indices: _,
+                    scrutinee,
+                } => {
+                    let scrutinee = self.force(scrutinee, face)?;
+                    let (head, spine) = self.application_spine(scrutinee);
+                    let head = self.force(head, face)?;
+                    let Val::Constructor(constructor_id) = self.get(head) else {
+                        break;
+                    };
+                    let constructor = self.program.constructors[constructor_id.index()].clone();
+                    if constructor.inductive != inductive {
+                        return Err(Error::plain(
+                            "internal error: eliminator constructor belongs to another family",
+                        ));
+                    }
+                    let family = self.program.inductives[inductive.index()].clone();
+                    let parameter_count = family.parameters.len();
+                    if spine.len() != parameter_count + constructor.arguments.len() {
+                        return Err(Error::plain(
+                            "internal error: malformed constructor application in eliminator",
+                        ));
+                    }
+                    let arguments = &spine[parameter_count..];
+                    let method_index = family
+                        .constructors
+                        .iter()
+                        .position(|id| *id == constructor_id)
+                        .ok_or_else(|| {
+                            Error::plain(
+                                "internal error: constructor missing from its inductive family",
+                            )
+                        })?;
+                    let mut method = *methods
+                        .get(method_index)
+                        .ok_or_else(|| Error::plain("internal error: missing eliminator method"))?;
+                    for (argument_index, argument) in arguments.iter().copied().enumerate() {
+                        method = self.app(method, argument);
+                        if constructor.recursive_arguments.contains(&argument_index) {
+                            let argument_type = self.neutral_type(argument, face)?;
+                            let Some((recursive_family, application)) =
+                                self.inductive_application(argument_type, face)?
+                            else {
+                                return Err(Error::plain(
+                                    "internal error: recursive constructor argument is not an inductive family",
+                                ));
+                            };
+                            if recursive_family != inductive || application.len() < parameter_count
+                            {
+                                return Err(Error::plain(
+                                    "internal error: recursive constructor argument has the wrong family",
+                                ));
+                            }
+                            let recursive_indices = application[parameter_count..].to_vec();
+                            let recursive = self.alloc(Val::Elim {
+                                inductive,
+                                parameters: parameters.clone(),
+                                motive,
+                                methods: methods.clone(),
+                                indices: recursive_indices,
+                                scrutinee: argument,
+                            });
+                            method = self.app(method, recursive);
+                        }
+                    }
+                    Some(method)
                 }
                 Val::PApp(p, d) => {
                     let p = self.force(p, face)?;
@@ -999,6 +1168,38 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn application_spine(&self, mut value: ValId) -> (ValId, Vec<ValId>) {
+        let mut arguments = vec![];
+        while let Val::App(function, argument) = self.get(value) {
+            arguments.push(argument);
+            value = function;
+        }
+        arguments.reverse();
+        (value, arguments)
+    }
+
+    pub(crate) fn inductive_application(
+        &mut self,
+        value: ValId,
+        face: FaceId,
+    ) -> Result<Option<(InductiveId, Vec<ValId>)>> {
+        let mut value = self.force(value, face)?;
+        let mut arguments = vec![];
+        loop {
+            match self.get(value) {
+                Val::App(function, argument) => {
+                    arguments.push(argument);
+                    value = self.force(function, face)?;
+                }
+                Val::Inductive(inductive) => {
+                    arguments.reverse();
+                    return Ok(Some((inductive, arguments)));
+                }
+                _ => return Ok(None),
+            }
+        }
+    }
+
     pub fn neutral_type(&mut self, v: ValId, face: FaceId) -> Result<ValId> {
         let v = self.force(v, face)?;
         match self.get(v) {
@@ -1029,6 +1230,18 @@ impl<'a> Engine<'a> {
                 }
             }
             Val::If(p, _, _, c) | Val::NatElim(p, _, _, c) => Ok(self.app(p, c)),
+            Val::Elim {
+                motive,
+                indices,
+                scrutinee,
+                ..
+            } => {
+                let mut result = motive;
+                for index in indices {
+                    result = self.app(result, index);
+                }
+                Ok(self.app(result, scrutinee))
+            }
             Val::PApp(p, d) => {
                 let ty = self.neutral_type(p, face)?;
                 let ty = self.force(ty, face)?;
@@ -1290,6 +1503,251 @@ mod tests {
             let open = e.force(open, face).unwrap();
             assert!(matches!(e.get(open), Val::PApp(..)));
         }
+    }
+
+    #[test]
+    fn generic_inductive_eliminator_reduces_recursive_constructor() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = program.alloc(Term::Inductive(nat), 0);
+        let pred = TelescopeEntry {
+            name: "pred".to_owned(),
+            ty: pred_ty,
+        };
+        let usuc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let mut e = Engine::new(&program, true, 100_000, 100_000);
+        let face = e.faces.top();
+        let nat_result = e.alloc(Val::Nat);
+        let motive_var = e.fresh_term();
+        let motive = e.alloc(Val::Lam(Binder {
+            var: motive_var,
+            body: nat_result,
+        }));
+        let zero_method = e.alloc(Val::Zero);
+
+        let ih_var = e.fresh_term();
+        let ih = e.alloc(Val::Var(ih_var, Some(nat_result)));
+        let suc_ih = e.alloc(Val::Suc(ih));
+        let ih_method = e.alloc(Val::Lam(Binder {
+            var: ih_var,
+            body: suc_ih,
+        }));
+        let pred_var = e.fresh_term();
+        let suc_method = e.alloc(Val::Lam(Binder {
+            var: pred_var,
+            body: ih_method,
+        }));
+
+        let uzero_value = e.alloc(Val::Constructor(uzero));
+        let usuc_value = e.alloc(Val::Constructor(usuc));
+        let one = e.alloc(Val::App(usuc_value, uzero_value));
+        let elim = e.alloc(Val::Elim {
+            inductive: nat,
+            parameters: vec![],
+            motive,
+            methods: vec![zero_method, suc_method],
+            indices: vec![],
+            scrutinee: one,
+        });
+
+        let reduced = e.force(elim, face).unwrap();
+        let reduced = e.force(reduced, face).unwrap();
+        assert!(matches!(e.get(reduced), Val::Suc(_)));
+        let Val::Suc(predecessor) = e.get(reduced) else {
+            unreachable!();
+        };
+        let predecessor = e.force(predecessor, face).unwrap();
+        assert!(matches!(e.get(predecessor), Val::Zero));
+    }
+
+    #[test]
+    fn indexed_vec_eliminator_reduces_using_tail_index() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat_ty = program.alloc(Term::Nat, 0);
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+        let zero_index = program.alloc(Term::Zero, 0);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+
+        let n_arg = TelescopeEntry {
+            name: "n".to_owned(),
+            ty: nat_ty,
+        };
+        let a_var = program.alloc(Term::Var(1), 0);
+        let head_arg = TelescopeEntry {
+            name: "head".to_owned(),
+            ty: a_var,
+        };
+        let vec_head = program.alloc(Term::Inductive(vec), 0);
+        let a_var = program.alloc(Term::Var(2), 0);
+        let vec_a = program.alloc(Term::App(vec_head, a_var), 0);
+        let n_var = program.alloc(Term::Var(1), 0);
+        let vec_a_n = program.alloc(Term::App(vec_a, n_var), 0);
+        let tail_arg = TelescopeEntry {
+            name: "tail".to_owned(),
+            ty: vec_a_n,
+        };
+        let n_result = program.alloc(Term::Var(2), 0);
+        let suc_n = program.alloc(Term::Suc(n_result), 0);
+        let cons = program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![n_arg, head_arg, tail_arg],
+            vec![suc_n],
+            vec![2],
+        );
+
+        let mut e = Engine::new(&program, true, 100_000, 100_000);
+        let face = e.faces.top();
+        let bool_parameter = e.alloc(Val::Bool);
+        let nat_result = e.alloc(Val::Nat);
+
+        // P = λ n. λ xs. Nat
+        let xs_var = e.fresh_term();
+        let motive_xs = e.alloc(Val::Lam(Binder {
+            var: xs_var,
+            body: nat_result,
+        }));
+        let n_var = e.fresh_term();
+        let motive = e.alloc(Val::Lam(Binder {
+            var: n_var,
+            body: motive_xs,
+        }));
+        let nil_method = e.alloc(Val::Zero);
+
+        // cons_case = λ n. λ head. λ tail. λ ih. suc ih
+        let ih_var = e.fresh_term();
+        let ih = e.alloc(Val::Var(ih_var, Some(nat_result)));
+        let suc_ih = e.alloc(Val::Suc(ih));
+        let mut cons_method = e.alloc(Val::Lam(Binder {
+            var: ih_var,
+            body: suc_ih,
+        }));
+        for _ in 0..3 {
+            let var = e.fresh_term();
+            cons_method = e.alloc(Val::Lam(Binder {
+                var,
+                body: cons_method,
+            }));
+        }
+
+        let nil_value = e.alloc(Val::Constructor(nil));
+        let nil_bool = e.alloc(Val::App(nil_value, bool_parameter));
+        let cons_value = e.alloc(Val::Constructor(cons));
+        let cons_bool = e.alloc(Val::App(cons_value, bool_parameter));
+        let zero = e.alloc(Val::Zero);
+        let cons_zero = e.alloc(Val::App(cons_bool, zero));
+        let true_value = e.alloc(Val::True);
+        let cons_true = e.alloc(Val::App(cons_zero, true_value));
+        let singleton = e.alloc(Val::App(cons_true, nil_bool));
+        let one = e.alloc(Val::Suc(zero));
+
+        let elim = e.alloc(Val::Elim {
+            inductive: vec,
+            parameters: vec![bool_parameter],
+            motive,
+            methods: vec![nil_method, cons_method],
+            indices: vec![one],
+            scrutinee: singleton,
+        });
+
+        let reduced = e.force(elim, face).unwrap();
+        let reduced = e.force(reduced, face).unwrap();
+        let Val::Suc(predecessor) = e.get(reduced) else {
+            panic!("Vec.cons eliminator did not reduce to the cons method");
+        };
+        let predecessor = e.force(predecessor, face).unwrap();
+        assert!(matches!(e.get(predecessor), Val::Zero));
+    }
+
+    #[test]
+    fn neutral_generic_eliminator_has_type_quotes_and_compares_structurally() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = program.alloc(Term::Inductive(nat), 0);
+        let pred = TelescopeEntry {
+            name: "pred".to_owned(),
+            ty: pred_ty,
+        };
+        program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let mut e = Engine::new(&program, true, 100_000, 100_000);
+        let face = e.faces.top();
+        let family = e.alloc(Val::Inductive(nat));
+        let scrutinee = e.variable(family);
+        let nat_result = e.alloc(Val::Nat);
+        let motive_var = e.fresh_term();
+        let motive = e.alloc(Val::Lam(Binder {
+            var: motive_var,
+            body: nat_result,
+        }));
+        let zero_method = e.alloc(Val::Zero);
+        let ih_var = e.fresh_term();
+        let ih = e.alloc(Val::Var(ih_var, Some(nat_result)));
+        let suc_ih = e.alloc(Val::Suc(ih));
+        let ih_method = e.alloc(Val::Lam(Binder {
+            var: ih_var,
+            body: suc_ih,
+        }));
+        let pred_var = e.fresh_term();
+        let suc_method = e.alloc(Val::Lam(Binder {
+            var: pred_var,
+            body: ih_method,
+        }));
+
+        let left = e.alloc(Val::Elim {
+            inductive: nat,
+            parameters: vec![],
+            motive,
+            methods: vec![zero_method, suc_method],
+            indices: vec![],
+            scrutinee,
+        });
+        let right = e.alloc(Val::Elim {
+            inductive: nat,
+            parameters: vec![],
+            motive,
+            methods: vec![zero_method, suc_method],
+            indices: vec![],
+            scrutinee,
+        });
+
+        let forced = e.force(left, face).unwrap();
+        assert!(matches!(e.get(forced), Val::Elim { .. }));
+        let ty = e.neutral_type(forced, face).unwrap();
+        assert!(e.conv(ty, nat_result, None, face).unwrap());
+        assert!(e.same(left, right, face, 128).unwrap());
+        let Val::Var(scrutinee_var, _) = e.get(scrutinee) else {
+            unreachable!();
+        };
+        let function = e.alloc(Val::Lam(Binder {
+            var: scrutinee_var,
+            body: forced,
+        }));
+        let function_type = e.alloc(Val::Pi(
+            family,
+            Binder {
+                var: scrutinee_var,
+                body: nat_result,
+            },
+        ));
+        let quoted = e.quote(function, function_type, face).unwrap();
+        assert!(quoted.contains("(elim UserNat"));
+        assert!(quoted.contains("(methods "));
     }
 
     #[test]

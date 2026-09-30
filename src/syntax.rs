@@ -40,6 +40,15 @@ pub(crate) enum Term {
     Inductive(InductiveId),
     #[allow(dead_code)]
     Constructor(ConstructorId),
+    #[allow(dead_code)]
+    Elim {
+        inductive: InductiveId,
+        parameters: Vec<TermId>,
+        motive: TermId,
+        methods: Vec<TermId>,
+        indices: Vec<TermId>,
+        scrutinee: TermId,
+    },
     Zero,
     Suc(TermId),
     NatElim(TermId, TermId, TermId, TermId),
@@ -88,6 +97,7 @@ pub(crate) struct ConstructorDecl {
     pub name: String,
     pub arguments: Telescope,
     pub result_indices: Vec<TermId>,
+    pub recursive_arguments: Vec<usize>,
 }
 
 #[allow(dead_code)]
@@ -98,7 +108,7 @@ pub(crate) struct InductiveDecl {
     pub universe: u32,
     pub parameters: Telescope,
     pub indices: Telescope,
-    pub constructors: Vec<ConstructorDecl>,
+    pub constructors: Vec<ConstructorId>,
 }
 #[derive(Default, Debug)]
 pub(crate) struct Program {
@@ -146,6 +156,7 @@ impl Program {
         name: String,
         arguments: Telescope,
         result_indices: Vec<TermId>,
+        recursive_arguments: Vec<usize>,
     ) -> ConstructorId {
         let constructor = ConstructorDecl {
             id: ConstructorId::new(self.constructors.len()),
@@ -153,11 +164,12 @@ impl Program {
             name,
             arguments,
             result_indices,
+            recursive_arguments,
         };
         self.constructors.push(constructor.clone());
         self.inductives[inductive.index()]
             .constructors
-            .push(constructor.clone());
+            .push(constructor.id);
         constructor.id
     }
 }
@@ -536,9 +548,9 @@ mod inductive_metadata_tests {
     fn stores_nat_shaped_inductive_metadata() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        program.push_constructor(nat, "zero".to_owned(), vec![], vec![]);
+        program.push_constructor(nat, "zero".to_owned(), vec![], vec![], vec![]);
         let pred = entry(&mut program, "pred", Term::Inductive(nat));
-        program.push_constructor(nat, "suc".to_owned(), vec![pred], vec![]);
+        program.push_constructor(nat, "suc".to_owned(), vec![pred], vec![], vec![0]);
 
         let declaration = &program.inductives[nat.index()];
         assert_eq!(declaration.id, nat);
@@ -547,9 +559,12 @@ mod inductive_metadata_tests {
         assert!(declaration.parameters.is_empty());
         assert!(declaration.indices.is_empty());
         assert_eq!(declaration.constructors.len(), 2);
-        assert_eq!(declaration.constructors[0].name, "zero");
-        assert_eq!(declaration.constructors[1].name, "suc");
-        assert_eq!(declaration.constructors[1].arguments.len(), 1);
+        let zero = &program.constructors[declaration.constructors[0].index()];
+        let suc = &program.constructors[declaration.constructors[1].index()];
+        assert_eq!(zero.name, "zero");
+        assert_eq!(suc.name, "suc");
+        assert_eq!(suc.arguments.len(), 1);
+        assert_eq!(suc.recursive_arguments, vec![0]);
     }
 
     #[test]
@@ -573,7 +588,7 @@ mod inductive_metadata_tests {
                 ty: nat,
             }],
         );
-        program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero]);
+        program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero], vec![]);
         program.push_constructor(
             vec,
             "cons".to_owned(),
@@ -582,15 +597,18 @@ mod inductive_metadata_tests {
                 ty: nat,
             }],
             vec![suc_n],
+            vec![2],
         );
 
         let declaration = &program.inductives[vec.index()];
         assert_eq!(declaration.parameters.len(), 1);
         assert_eq!(declaration.indices.len(), 1);
-        assert_eq!(declaration.constructors[0].result_indices.len(), 1);
-        assert_eq!(declaration.constructors[1].result_indices.len(), 1);
-        assert_eq!(declaration.constructors[0].id.index(), 0);
-        assert_eq!(declaration.constructors[1].id.index(), 1);
+        let nil = &program.constructors[declaration.constructors[0].index()];
+        let cons = &program.constructors[declaration.constructors[1].index()];
+        assert_eq!(nil.result_indices.len(), 1);
+        assert_eq!(cons.result_indices.len(), 1);
+        assert_eq!(nil.id.index(), 0);
+        assert_eq!(cons.id.index(), 1);
         assert_eq!(program.constructors.len(), 2);
     }
 }

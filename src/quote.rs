@@ -36,7 +36,7 @@ impl Engine<'_> {
     ) -> Result<String> {
         // Work/node budgets do not bound the native call stack. Keep structural
         // quotation shallow; flat successor chains are handled iteratively.
-        if n.depth >= 64 {
+        if n.depth >= 32 {
             return Err(Error::plain(
                 "quotation depth budget exhausted (not a proof rejection)",
             ));
@@ -216,6 +216,44 @@ impl Engine<'_> {
                 let b = self.quote_inner(b, Some(bt), face, n)?;
                 let c = self.quote_inner(c, Some(bool_ty), face, n)?;
                 format!("(bool-elim (lam {name} {motive}) {a} {b} {c})")
+            }
+            Val::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let family = self.program.inductives[inductive.index()].name.clone();
+                let mut parameter_terms = Vec::with_capacity(parameters.len());
+                for parameter in parameters.iter().copied() {
+                    parameter_terms.push(self.quote_inner(parameter, None, face, n)?);
+                }
+                let declaration = self.program.inductives[inductive.index()].clone();
+                let motive_type =
+                    self.generic_motive_type(inductive, &parameters, declaration.universe);
+                let motive_term = self.quote_inner(motive, Some(motive_type), face, n)?;
+                let mut method_terms = Vec::with_capacity(methods.len());
+                for (method, constructor) in methods
+                    .into_iter()
+                    .zip(declaration.constructors.iter().copied())
+                {
+                    let method_type =
+                        self.generic_method_type(constructor, &parameters, motive, face)?;
+                    method_terms.push(self.quote_inner(method, Some(method_type), face, n)?);
+                }
+                let mut index_terms = Vec::with_capacity(indices.len());
+                for index in indices {
+                    index_terms.push(self.quote_inner(index, None, face, n)?);
+                }
+                let scrutinee = self.quote_inner(scrutinee, None, face, n)?;
+                format!(
+                    "(elim {family} (params {}) {motive_term} (methods {}) (indices {}) {scrutinee})",
+                    parameter_terms.join(" "),
+                    method_terms.join(" "),
+                    index_terms.join(" "),
+                )
             }
             Val::NatElim(p, z, s, k) => {
                 let nat = self.alloc(Val::Nat);
