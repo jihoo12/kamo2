@@ -23,6 +23,8 @@ struct Elaborator {
     globals: HashMap<String, usize>,
     global_types: HashMap<String, Expr>,
     locals: Vec<(String, Expr)>,
+    current_definition: Option<String>,
+    recursive_calls: HashMap<String, String>,
 }
 
 impl Elaborator {
@@ -158,7 +160,11 @@ impl Elaborator {
             .as_ref()
             .ok_or_else(|| Error::plain("surface definitions require a type annotation"))?;
         let ty = self.term(ty_expr)?;
-        let body = self.term_expected(&declaration.value, Some(ty_expr))?;
+        self.current_definition = Some(declaration.name.clone());
+        let body = self.term_expected(&declaration.value, Some(ty_expr));
+        self.current_definition = None;
+        self.recursive_calls.clear();
+        let body = body?;
         let index = self.core.decls.len();
         self.core.push_decl(declaration.name.clone(), ty, body);
         self.globals.insert(declaration.name.clone(), index);
