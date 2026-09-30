@@ -1014,6 +1014,43 @@ mod inductive_core_tests {
     }
 
     #[test]
+    fn checks_recursive_nat_eliminator() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred = entry(&mut program, "pred", Term::Inductive(nat));
+        let usuc =
+            program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let nat_result = program.alloc(Term::Nat, 0);
+        let motive = program.alloc(Term::Lam(nat_result), 0);
+        let zero_method = program.alloc(Term::Zero, 0);
+        let ih = program.alloc(Term::Var(0), 0);
+        let suc_ih = program.alloc(Term::Suc(ih), 0);
+        let suc_ih = program.alloc(Term::Lam(suc_ih), 0);
+        let suc_method = program.alloc(Term::Lam(suc_ih), 0);
+
+        let usuc_head = program.alloc(Term::Constructor(usuc), 0);
+        let uzero_term = program.alloc(Term::Constructor(uzero), 0);
+        let one = program.alloc(Term::App(usuc_head, uzero_term), 0);
+        let elim = program.alloc(
+            Term::Elim {
+                inductive: nat,
+                parameters: vec![],
+                motive,
+                methods: vec![zero_method, suc_method],
+                indices: vec![],
+                scrutinee: one,
+            },
+            0,
+        );
+        let expected = program.alloc(Term::Nat, 0);
+        program.push_decl("fold-one".to_owned(), expected, elim);
+
+        check_all(&program).unwrap();
+    }
+
+    #[test]
     fn checks_indexed_vec_nil_constructor() {
         let mut program = Program::default();
         let type0 = program.alloc(Term::U(0), 0);
