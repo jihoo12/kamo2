@@ -36,7 +36,7 @@ impl Engine<'_> {
     ) -> Result<String> {
         // Work/node budgets do not bound the native call stack. Keep structural
         // quotation shallow; flat successor chains are handled iteratively.
-        if n.depth >= 64 {
+        if n.depth >= 32 {
             return Err(Error::plain(
                 "quotation depth budget exhausted (not a proof rejection)",
             ));
