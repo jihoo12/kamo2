@@ -106,6 +106,26 @@ impl CheckedProgram {
             return Err(Error::plain("source size budget exceeded (maximum 4 MiB)"));
         }
         let program = syntax::parse(source)?;
+        Self::check_program(program, options)
+    }
+
+    /// Parses the functional surface language, elaborates it to the existing
+    /// core syntax, and checks the resulting program with the same kernel.
+    pub fn check_surface(source: &str) -> Result<Self> {
+        Self::check_surface_with(source, Options::default())
+    }
+
+    pub fn check_surface_with(source: &str, options: Options) -> Result<Self> {
+        if source.len() > MAX_SOURCE_BYTES {
+            return Err(Error::plain("source size budget exceeded (maximum 4 MiB)"));
+        }
+        let surface = surface::parser::parse(source)?;
+        let core = surface::to_core_source(&surface)?;
+        let program = syntax::parse(&core)?;
+        Self::check_program(program, options)
+    }
+
+    fn check_program(program: syntax::Program, options: Options) -> Result<Self> {
         for index in 0..program.decls.len() {
             let mut engine =
                 eval::Engine::new(&program, options.optimized, options.fuel, options.max_nodes);
