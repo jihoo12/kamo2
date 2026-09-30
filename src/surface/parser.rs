@@ -103,7 +103,10 @@ impl Parser {
 
     fn name(&mut self) -> Result<String> {
         match self.tokens.get(self.index) {
-            Some(Token { kind: TokenKind::Name(name), .. }) => {
+            Some(Token {
+                kind: TokenKind::Name(name),
+                ..
+            }) => {
                 let name = name.clone();
                 self.index += 1;
                 Ok(name)
@@ -143,7 +146,10 @@ impl Parser {
             self.expect(TokenKind::RParen, "expected ')' after parameter")?;
             parameters.push((parameter, ty));
         }
-        self.expect(TokenKind::Colon, "surface definitions require a type annotation")?;
+        self.expect(
+            TokenKind::Colon,
+            "surface definitions require a type annotation",
+        )?;
         let mut ty = self.expr()?;
         self.expect(TokenKind::Eq, "expected '=' before definition body")?;
         let mut value = self.expr()?;
