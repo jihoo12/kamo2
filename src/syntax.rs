@@ -531,17 +531,10 @@ mod inductive_metadata_tests {
     #[test]
     fn stores_nat_shaped_inductive_metadata() {
         let mut program = Program::default();
-        let pred = entry(&mut program, "pred", Term::Nat);
-        let nat = program.push_inductive(
-            "UserNat".to_owned(),
-            0,
-            vec![],
-            vec![],
-            vec![
-                ("zero".to_owned(), vec![], vec![]),
-                ("suc".to_owned(), vec![pred], vec![]),
-            ],
-        );
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        program.push_constructor(nat, "zero".to_owned(), vec![], vec![]);
+        let pred = entry(&mut program, "pred", Term::Inductive(nat));
+        program.push_constructor(nat, "suc".to_owned(), vec![pred], vec![]);
 
         let declaration = &program.inductives[nat.index()];
         assert_eq!(declaration.id, nat);
@@ -575,17 +568,16 @@ mod inductive_metadata_tests {
                 name: "length".to_owned(),
                 ty: nat,
             }],
-            vec![
-                ("nil".to_owned(), vec![], vec![zero]),
-                (
-                    "cons".to_owned(),
-                    vec![TelescopeEntry {
-                        name: "n".to_owned(),
-                        ty: nat,
-                    }],
-                    vec![suc_n],
-                ),
-            ],
+        );
+        program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero]);
+        program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![TelescopeEntry {
+                name: "n".to_owned(),
+                ty: nat,
+            }],
+            vec![suc_n],
         );
 
         let declaration = &program.inductives[vec.index()];
