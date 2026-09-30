@@ -34,7 +34,7 @@ impl Elaborator {
             .as_ref()
             .ok_or_else(|| Error::plain("surface definitions require a type annotation"))?;
         let ty = self.term(ty_expr)?;
-        let body = self.term(&declaration.value)?;
+        let body = self.term_expected(&declaration.value, Some(ty_expr))?;
         let index = self.core.decls.len();
         self.core
             .push_decl(declaration.name.clone(), ty, body);
@@ -45,6 +45,10 @@ impl Elaborator {
     }
 
     fn term(&mut self, expr: &Expr) -> Result<TermId> {
+        self.term_expected(expr, None)
+    }
+
+    fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
             Expr::Name(name) => {
                 if let Some(index) = self.locals.iter().rev().position(|(local, _)| local == name) {
@@ -78,24 +82,45 @@ impl Elaborator {
                 Term::Pi(domain_term, codomain_term?)
             }
             Expr::Lambda { parameter, body } => {
-                // Lambda types are supplied by the surrounding declaration/checker.
-                self.locals
-                    .push((parameter.clone(), Expr::Name("<unknown>".to_owned())));
-                let body = self.term(body);
+                let (parameter_ty, body_expected) = match expected {
+                    Some(Expr::Pi {
+                        parameter: binder,
+                        domain,
+                        codomain,
+                    }) => {
+                        let body_expected = binder
+                            .as_deref()
+                            .map(|binder| {
+                                substitute(codomain, binder, &Expr::Name(parameter.clone()))
+                            })
+                            .unwrap_or_else(|| (**codomain).clone());
+                        ((**domain).clone(), Some(body_expected))
+                    }
+                    _ => (Expr::Name("<unknown>".to_owned()), None),
+                };
+                self.locals.push((parameter.clone(), parameter_ty));
+                let body = self.term_expected(body, body_expected.as_ref());
                 self.locals.pop();
                 Term::Lam(body?)
             }
             Expr::Apply { function, argument } => {
+                let function_ty = self.infer(function).ok();
                 let function = self.term(function)?;
-                let argument = self.term(argument)?;
+                let argument = match function_ty.as_ref() {
+                    Some(Expr::Pi { domain, .. }) => self.term_expected(argument, Some(domain))?,
+                    _ => self.term(argument)?,
+                };
                 Term::App(function, argument)
             }
             Expr::Let { name, value, body } => {
                 let value_ty = self.infer(value)?;
                 let value_term = self.term(value)?;
                 self.locals.push((name.clone(), value_ty.clone()));
-                let body_ty = self.infer(body)?;
-                let body_term = self.term(body)?;
+                let body_ty = match expected {
+                    Some(expected) => expected.clone(),
+                    None => self.infer(body)?,
+                };
+                let body_term = self.term_expected(body, Some(&body_ty))?;
                 let body_ty_term = self.term(&body_ty)?;
                 self.locals.pop();
                 let domain = self.term(&value_ty)?;
