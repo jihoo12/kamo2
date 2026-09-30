@@ -11,15 +11,15 @@ pub(crate) fn to_core_source(program: &Program) -> Result<String> {
         out.push_str("(def ");
         out.push_str(&declaration.name);
         out.push(' ');
-        emit(ty, &mut out)?;
+        emit(ty, &mut out, &[])?;
         out.push(' ');
-        emit(&declaration.value, &mut out)?;
+        emit(&declaration.value, &mut out, &[])?;
         out.push_str(")\n");
     }
     Ok(out)
 }
 
-fn emit(expr: &Expr, out: &mut String) -> Result<()> {
+fn emit(expr: &Expr, out: &mut String, locals: &[(String, Expr)]) -> Result<()> {
     match expr {
         Expr::Name(name) => out.push_str(name),
         Expr::Universe(level) => {
@@ -32,7 +32,7 @@ fn emit(expr: &Expr, out: &mut String) -> Result<()> {
         Expr::False => out.push_str("false"),
         Expr::Nat => out.push_str("Nat"),
         Expr::Zero => out.push_str("zero"),
-        Expr::Suc(value) => unary("suc", value, out)?,
+        Expr::Suc(value) => unary("suc", value, out, locals)?,
         Expr::Pi {
             parameter,
             domain,
@@ -41,46 +41,46 @@ fn emit(expr: &Expr, out: &mut String) -> Result<()> {
             out.push_str("(Pi ");
             out.push_str(parameter.as_deref().unwrap_or("_"));
             out.push(' ');
-            emit(domain, out)?;
+            emit(domain, out, locals)?;
             out.push(' ');
-            emit(codomain, out)?;
+            emit(codomain, out, locals)?;
             out.push(')');
         }
         Expr::Lambda { parameter, body } => {
             out.push_str("(lam ");
             out.push_str(parameter);
             out.push(' ');
-            emit(body, out)?;
+            emit(body, out, locals)?;
             out.push(')');
         }
         Expr::Apply { function, argument } => {
             out.push_str("(app ");
-            emit(function, out)?;
+            emit(function, out, locals)?;
             out.push(' ');
-            emit(argument, out)?;
+            emit(argument, out, locals)?;
             out.push(')');
         }
         Expr::Let { name, value, body } => {
             // The core cannot infer a bare lambda in function position, so annotate
             // the lambda with the Pi type obtained from the let-bound value.
-            let value_ty = simple_type(value).ok_or_else(|| {
+            let value_ty = simple_type(value, locals).ok_or_else(|| {
                 Error::plain("cannot infer let-bound value type; add surface let annotations later")
+            })?;
+            let mut body_locals = locals.to_vec();
+            body_locals.push((name.clone(), value_ty.clone()));
+            let body_ty = simple_type(body, &body_locals).ok_or_else(|| {
+                Error::plain("cannot infer let body type; add surface let annotations later")
             })?;
             out.push_str("(app (ann (lam ");
             out.push_str(name);
             out.push(' ');
-            emit(body, out)?;
+            emit(body, out, &body_locals)?;
             out.push_str(") (Pi _ ");
-            emit(&value_ty, out)?;
+            emit(&value_ty, out, locals)?;
             out.push(' ');
-            // The codomain is only needed to infer the lambda application. For the
-            // initial surface milestone, infer it from the body when it is simple.
-            let body_ty = simple_type(body).ok_or_else(|| {
-                Error::plain("cannot infer let body type; add surface let annotations later")
-            })?;
-            emit(&body_ty, out)?;
+            emit(&body_ty, out, &body_locals)?;
             out.push_str(")) ");
-            emit(value, out)?;
+            emit(value, out, locals)?;
             out.push(')');
         }
         Expr::If {
@@ -91,19 +91,24 @@ fn emit(expr: &Expr, out: &mut String) -> Result<()> {
             // Bool elimination needs a motive. This surface node is reserved until
             // motive synthesis is part of elaboration.
             out.push_str("(surface-if ");
-            emit(condition, out)?;
+            emit(condition, out, locals)?;
             out.push(' ');
-            emit(then_branch, out)?;
+            emit(then_branch, out, locals)?;
             out.push(' ');
-            emit(else_branch, out)?;
+            emit(else_branch, out, locals)?;
             out.push(')');
         }
     }
     Ok(())
 }
 
-fn simple_type(expr: &Expr) -> Option<Expr> {
+fn simple_type(expr: &Expr, locals: &[(String, Expr)]) -> Option<Expr> {
     match expr {
+        Expr::Name(name) => locals
+            .iter()
+            .rev()
+            .find(|(local, _)| local == name)
+            .map(|(_, ty)| ty.clone()),
         Expr::True | Expr::False => Some(Expr::Bool),
         Expr::Zero | Expr::Suc(_) => Some(Expr::Nat),
         Expr::Bool | Expr::Nat => Some(Expr::Universe(0)),
@@ -112,11 +117,11 @@ fn simple_type(expr: &Expr) -> Option<Expr> {
     }
 }
 
-fn unary(name: &str, value: &Expr, out: &mut String) -> Result<()> {
+fn unary(name: &str, value: &Expr, out: &mut String, locals: &[(String, Expr)]) -> Result<()> {
     out.push('(');
     out.push_str(name);
     out.push(' ');
-    emit(value, out)?;
+    emit(value, out, locals)?;
     out.push(')');
     Ok(())
 }
