@@ -166,6 +166,9 @@ impl Engine<'_> {
             Term::Bool | Term::Nat => Val::U(0),
             Term::Inductive(id) => return Ok(self.inductive_type(id)),
             Term::Constructor(id) => return Ok(self.constructor_type(id)),
+            Term::Elim { .. } => {
+                return Err(self.error(t, "generic inductive eliminator typing is not implemented yet"));
+            },
             Term::True | Term::False => Val::Bool,
             Term::Zero => Val::Nat,
             Term::Suc(n) => {
