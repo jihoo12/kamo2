@@ -117,37 +117,44 @@ impl Program {
         self.decls.push(Decl { name, ty, body });
     }
 
-    #[allow(dead_code)]
     pub(crate) fn push_inductive(
         &mut self,
         name: String,
         universe: u32,
         parameters: Telescope,
         indices: Telescope,
-        constructors: Vec<(String, Telescope, Vec<TermId>)>,
     ) -> InductiveId {
         let id = InductiveId::new(self.inductives.len());
-        let mut constructor_decls = Vec::with_capacity(constructors.len());
-        for (name, arguments, result_indices) in constructors {
-            let constructor = ConstructorDecl {
-                id: ConstructorId::new(self.constructors.len()),
-                inductive: id,
-                name,
-                arguments,
-                result_indices,
-            };
-            self.constructors.push(constructor.clone());
-            constructor_decls.push(constructor);
-        }
         self.inductives.push(InductiveDecl {
             id,
             name,
             universe,
             parameters,
             indices,
-            constructors: constructor_decls,
+            constructors: vec![],
         });
         id
+    }
+
+    pub(crate) fn push_constructor(
+        &mut self,
+        inductive: InductiveId,
+        name: String,
+        arguments: Telescope,
+        result_indices: Vec<TermId>,
+    ) -> ConstructorId {
+        let constructor = ConstructorDecl {
+            id: ConstructorId::new(self.constructors.len()),
+            inductive,
+            name,
+            arguments,
+            result_indices,
+        };
+        self.constructors.push(constructor.clone());
+        self.inductives[inductive.index()]
+            .constructors
+            .push(constructor.clone());
+        constructor.id
     }
 }
 #[derive(Debug)]
