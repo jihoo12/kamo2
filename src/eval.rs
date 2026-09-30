@@ -970,12 +970,14 @@ impl<'a> Engine<'a> {
                         .constructors
                         .iter()
                         .position(|id| *id == constructor_id)
-                        .ok_or_else(|| Error::plain(
-                            "internal error: constructor missing from its inductive family",
-                        ))?;
-                    let mut method = *methods.get(method_index).ok_or_else(|| {
-                        Error::plain("internal error: missing eliminator method")
-                    })?;
+                        .ok_or_else(|| {
+                            Error::plain(
+                                "internal error: constructor missing from its inductive family",
+                            )
+                        })?;
+                    let mut method = *methods
+                        .get(method_index)
+                        .ok_or_else(|| Error::plain("internal error: missing eliminator method"))?;
                     for (argument_index, argument) in arguments.iter().copied().enumerate() {
                         method = self.app(method, argument);
                         if constructor.recursive_arguments.contains(&argument_index) {
@@ -987,7 +989,8 @@ impl<'a> Engine<'a> {
                                     "internal error: recursive constructor argument is not an inductive family",
                                 ));
                             };
-                            if recursive_family != inductive || application.len() < parameter_count {
+                            if recursive_family != inductive || application.len() < parameter_count
+                            {
                                 return Err(Error::plain(
                                     "internal error: recursive constructor argument has the wrong family",
                                 ));
@@ -1512,8 +1515,7 @@ mod tests {
             name: "pred".to_owned(),
             ty: pred_ty,
         };
-        let usuc =
-            program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+        let usuc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
 
         let mut e = Engine::new(&program, true, 100_000, 100_000);
         let face = e.faces.top();
