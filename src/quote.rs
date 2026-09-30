@@ -217,6 +217,11 @@ impl Engine<'_> {
                 let c = self.quote_inner(c, Some(bool_ty), face, n)?;
                 format!("(bool-elim (lam {name} {motive}) {a} {b} {c})")
             }
+            Val::Elim { .. } => {
+                return Err(Error::plain(
+                    "internal error: generic inductive eliminator quotation is not implemented yet",
+                ));
+            }
             Val::NatElim(p, z, s, k) => {
                 let nat = self.alloc(Val::Nat);
                 let x = self.variable(nat);
