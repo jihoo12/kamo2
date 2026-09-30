@@ -51,10 +51,10 @@ fn lex(source: &str) -> Result<Vec<Token>> {
             b'=' => (TokenKind::Eq, 1),
             _ => {
                 let start = i;
-                while i < bytes.len()
-                    && !bytes[i].is_ascii_whitespace()
-                    && !b"(){}:=\\;".contains(&bytes[i])
-                    && !(bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
+                while !(i >= bytes.len()
+                    || bytes[i].is_ascii_whitespace()
+                    || b"(){}:=\\;".contains(&bytes[i])
+                    || bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
                 {
                     i += 1;
                 }
