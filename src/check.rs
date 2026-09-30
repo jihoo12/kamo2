@@ -217,11 +217,27 @@ impl Engine<'_> {
                 let motive_type =
                     self.generic_motive_type(inductive, &parameter_values, declaration.universe);
                 self.check(motive, motive_type, ctx)?;
+                let motive_value = self.thunk(motive, ctx.env);
 
-                return Err(self.error(
-                    t,
-                    "generic inductive eliminator method checking is not implemented yet",
-                ));
+                for (method, constructor) in
+                    methods.into_iter().zip(declaration.constructors.iter().copied())
+                {
+                    let method_type = self.generic_method_type(
+                        inductive,
+                        constructor,
+                        &parameter_values,
+                        motive_value,
+                        ctx.face,
+                    )?;
+                    self.check(method, method_type, ctx)?;
+                }
+
+                let mut result = motive_value;
+                for index in index_values {
+                    result = self.app(result, index);
+                }
+                let scrutinee = self.thunk(scrutinee, ctx.env);
+                return Ok(self.app(result, scrutinee));
             }
             Term::True | Term::False => Val::Bool,
             Term::Zero => Val::Nat,
@@ -505,6 +521,108 @@ impl Engine<'_> {
         };
         Ok(self.alloc(ty))
     }
+    fn generic_method_type(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        constructor_id: crate::syntax::ConstructorId,
+        parameters: &[ValId],
+        motive: ValId,
+        face: FaceId,
+    ) -> Result<ValId> {
+        let constructor = self.program.constructors[constructor_id.index()].clone();
+        let parameter_count = parameters.len();
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_generic_method_arguments(
+            inductive,
+            &constructor,
+            parameters,
+            parameter_count,
+            motive,
+            face,
+            0,
+            env,
+        )
+    }
+
+    fn bind_generic_method_arguments(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        constructor: &crate::syntax::ConstructorDecl,
+        parameters: &[ValId],
+        parameter_count: usize,
+        motive: ValId,
+        face: FaceId,
+        index: usize,
+        env: EnvId,
+    ) -> Result<ValId> {
+        if index == constructor.arguments.len() {
+            let values = self.environment(env).terms;
+            let mut constructor_value = self.alloc(Val::Constructor(constructor.id));
+            for parameter in parameters {
+                constructor_value = self.app(constructor_value, *parameter);
+            }
+            for argument in values.iter().skip(parameter_count) {
+                constructor_value = self.app(constructor_value, *argument);
+            }
+            let mut result = motive;
+            for result_index in &constructor.result_indices {
+                let value = self.thunk(*result_index, env);
+                result = self.app(result, value);
+            }
+            return Ok(self.app(result, constructor_value));
+        }
+
+        let domain = self.thunk(constructor.arguments[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+
+        let mut body = self.bind_generic_method_arguments(
+            inductive,
+            constructor,
+            parameters,
+            parameter_count,
+            motive,
+            face,
+            index + 1,
+            next,
+        )?;
+
+        if constructor.recursive_arguments.contains(&index) {
+            let Some((recursive_family, application)) =
+                self.inductive_application(domain, face)?
+            else {
+                return Err(Error::plain(
+                    "recursive constructor argument is not an inductive family",
+                ));
+            };
+            if recursive_family != inductive || application.len() < parameter_count {
+                return Err(Error::plain(
+                    "recursive constructor argument has the wrong inductive family",
+                ));
+            }
+            let mut ih_type = motive;
+            for recursive_index in application.iter().skip(parameter_count) {
+                ih_type = self.app(ih_type, *recursive_index);
+            }
+            ih_type = self.app(ih_type, value);
+            let ih = self.fresh_term();
+            body = self.alloc(Val::Pi(
+                ih_type,
+                Binder {
+                    var: ih,
+                    body,
+                },
+            ));
+        }
+
+        Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
+    }
+
     fn generic_motive_type(
         &mut self,
         inductive: crate::syntax::InductiveId,
