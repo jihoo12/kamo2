@@ -94,14 +94,10 @@ impl Elaborator {
                 let value_ty = self.infer(value)?;
                 let value_term = self.term(value)?;
                 self.locals.push((name.clone(), value_ty.clone()));
-                let body_ty = self.infer(body);
-                let body_term = self.term(body);
-                let body_ty_term = body_ty.as_ref().and_then(|ty| self.term(ty));
+                let body_ty = self.infer(body)?;
+                let body_term = self.term(body)?;
+                let body_ty_term = self.term(&body_ty)?;
                 self.locals.pop();
-
-                let body_ty = body_ty?;
-                let body_term = body_term?;
-                let body_ty_term = body_ty_term?;
                 let domain = self.term(&value_ty)?;
                 let lambda = self.core.alloc(Term::Lam(body_term), 0);
                 let pi = self.core.alloc(Term::Pi(domain, body_ty_term), 0);
