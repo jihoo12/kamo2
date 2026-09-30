@@ -5,9 +5,9 @@
 //! target language.
 
 pub mod ast;
-mod lower;
+mod elaborate;
 pub mod parser;
 
-pub(crate) fn to_core_source(program: &ast::Program) -> crate::Result<String> {
-    lower::to_core_source(program)
+pub(crate) fn elaborate(program: &ast::Program) -> crate::Result<crate::syntax::Program> {
+    elaborate::elaborate(program)
 }
