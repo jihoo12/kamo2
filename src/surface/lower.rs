@@ -112,10 +112,11 @@ fn simple_type(expr: &Expr) -> Option<Expr> {
     }
 }
 
-fn unary(name: &str, value: &Expr, out: &mut String) {
+fn unary(name: &str, value: &Expr, out: &mut String) -> Result<()> {
     out.push('(');
     out.push_str(name);
     out.push(' ');
     emit(value, out)?;
     out.push(')');
+    Ok(())
 }
