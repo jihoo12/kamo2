@@ -500,7 +500,6 @@ pub(crate) fn parse(source: &str) -> Result<Program> {
     Ok(p.program)
 }
 
-
 #[cfg(test)]
 mod inductive_metadata_tests {
     use super::*;
