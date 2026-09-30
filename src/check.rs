@@ -531,33 +531,22 @@ impl Engine<'_> {
         face: FaceId,
     ) -> Result<ValId> {
         let constructor = self.program.constructors[constructor_id.index()].clone();
-        let parameter_count = parameters.len();
         let mut env = Env::default();
         env.terms.extend_from_slice(parameters);
         let env = self.env(env);
-        self.bind_generic_method_arguments(
-            inductive,
-            &constructor,
-            parameters,
-            parameter_count,
-            motive,
-            face,
-            0,
-            env,
-        )
+        self.bind_generic_method_arguments(&constructor, parameters, motive, face, 0, env)
     }
 
     fn bind_generic_method_arguments(
         &mut self,
-        inductive: crate::syntax::InductiveId,
         constructor: &crate::syntax::ConstructorDecl,
         parameters: &[ValId],
-        parameter_count: usize,
         motive: ValId,
         face: FaceId,
         index: usize,
         env: EnvId,
     ) -> Result<ValId> {
+        let parameter_count = parameters.len();
         if index == constructor.arguments.len() {
             let values = self.environment(env).terms;
             let mut constructor_value = self.alloc(Val::Constructor(constructor.id));
@@ -583,10 +572,8 @@ impl Engine<'_> {
         let next = self.env(next);
 
         let mut body = self.bind_generic_method_arguments(
-            inductive,
             constructor,
             parameters,
-            parameter_count,
             motive,
             face,
             index + 1,
@@ -600,7 +587,7 @@ impl Engine<'_> {
                     "recursive constructor argument is not an inductive family",
                 ));
             };
-            if recursive_family != inductive || application.len() < parameter_count {
+            if recursive_family != constructor.inductive || application.len() < parameter_count {
                 return Err(Error::plain(
                     "recursive constructor argument has the wrong inductive family",
                 ));
