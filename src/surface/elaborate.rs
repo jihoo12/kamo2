@@ -225,6 +225,13 @@ impl Elaborator {
             };
 
             let mut pushed = 0;
+            let mut metadata_names = parameter_exprs
+                .iter()
+                .map(|parameter| match parameter {
+                    Expr::Name(name) => name.clone(),
+                    _ => "<parameter>".to_owned(),
+                })
+                .collect::<Vec<_>>();
             for (argument_index, (argument, entry)) in
                 arguments.iter().zip(&constructor.arguments).enumerate()
             {
@@ -233,8 +240,9 @@ impl Elaborator {
                         "nested constructor patterns are not supported yet",
                     ));
                 };
-                let ty = self.surface_type(entry.ty)?;
+                let ty = self.surface_type_in(entry.ty, &metadata_names)?;
                 self.locals.push((name.clone(), ty.clone()));
+                metadata_names.push(name.clone());
                 pushed += 1;
                 if constructor.recursive_arguments.contains(&argument_index) {
                     let (recursive_family, mut recursive_parameters, recursive_indices) =
@@ -364,9 +372,7 @@ impl Elaborator {
                     };
                     let (ih, expected_prefix) =
                         self.recursive_calls.get(argument_name).ok_or_else(|| {
-                            Error::plain(
-                                "recursive call is not on a structurally smaller argument",
-                            )
+                            Error::plain("recursive call is not on a structurally smaller argument")
                         })?;
                     let actual_prefix =
                         &recursive_arguments[..recursive_arguments.len().saturating_sub(1)];
@@ -452,6 +458,30 @@ impl Elaborator {
             return Ok(result);
         }
         Err(Error::plain(format!("cannot infer type of '{name}'")))
+    }
+
+    fn surface_type_in(&self, term: TermId, names: &[String]) -> Result<Expr> {
+        match self.core.terms.get(term).term.clone() {
+            Term::U(level) => Ok(Expr::Universe(level)),
+            Term::Bool => Ok(Expr::Bool),
+            Term::Nat => Ok(Expr::Nat),
+            Term::Inductive(inductive) => Ok(Expr::Name(
+                self.core.inductives[inductive.index()].name.clone(),
+            )),
+            Term::App(function, argument) => Ok(Expr::Apply {
+                function: Box::new(self.surface_type_in(function, names)?),
+                argument: Box::new(self.surface_type_in(argument, names)?),
+            }),
+            Term::Var(index) => names
+                .iter()
+                .rev()
+                .nth(index)
+                .map(|name| Expr::Name(name.clone()))
+                .ok_or_else(|| Error::plain("inductive metadata contains an escaped variable")),
+            _ => Err(Error::plain(
+                "inductive metadata type is not representable in surface syntax",
+            )),
+        }
     }
 
     fn surface_type(&self, term: TermId) -> Result<Expr> {
