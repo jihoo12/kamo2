@@ -69,6 +69,16 @@ pub(crate) struct Program {
     pub terms: Arena<TermId, Node>,
     pub decls: Vec<Decl>,
 }
+
+impl Program {
+    pub(crate) fn alloc(&mut self, term: Term, offset: usize) -> TermId {
+        self.terms.alloc(Node { term, offset })
+    }
+
+    pub(crate) fn push_decl(&mut self, name: String, ty: TermId, body: TermId) {
+        self.decls.push(Decl { name, ty, body });
+    }
+}
 #[derive(Debug)]
 struct S {
     kind: Kind,

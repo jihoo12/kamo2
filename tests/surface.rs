@@ -27,12 +27,16 @@ fn documentation_style_id_and_twice() {
 }
 
 #[test]
-fn dependent_pi_and_let_lower_to_core() {
+fn dependent_pi_and_let_elaborate_directly() {
     let source = r#"
         def dep : (A : Type) -> A -> A = \A => \x => x
+        def id (A : Type) (x : A) : A = x
         def via-let : Bool = let x = true; x
+        def via-app-let : Bool = let f = id Bool; f true
+        def local-let (A : Type) (x : A) : A = let y = x; y
     "#;
     assert_eq!(surface_nf(source, "via-let"), "true");
+    assert_eq!(surface_nf(source, "via-app-let"), "true");
 }
 
 #[test]
