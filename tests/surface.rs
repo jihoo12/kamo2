@@ -19,7 +19,10 @@ fn documentation_style_id_and_twice() {
         def result : Bool = twice Bool (\x => x) true
     "#;
     let program = CheckedProgram::check_surface(source).unwrap();
-    assert_eq!(program.names().collect::<Vec<_>>(), ["id", "twice", "result"]);
+    assert_eq!(
+        program.names().collect::<Vec<_>>(),
+        ["id", "twice", "result"]
+    );
     assert_eq!(program.normalize("result").unwrap().text, "true");
 }
 
