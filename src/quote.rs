@@ -235,11 +235,17 @@ impl Engine<'_> {
                     self.generic_motive_type(inductive, &parameters, declaration.universe);
                 let motive_term = self.quote_inner(motive, Some(motive_type), face, n)?;
                 let mut method_terms = Vec::with_capacity(methods.len());
-                for (method, constructor) in
-                    methods.into_iter().zip(declaration.constructors.iter().copied())
+                for (method, constructor) in methods
+                    .into_iter()
+                    .zip(declaration.constructors.iter().copied())
                 {
-                    let method_type =
-                        self.generic_method_type(inductive, constructor, &parameters, motive, face)?;
+                    let method_type = self.generic_method_type(
+                        inductive,
+                        constructor,
+                        &parameters,
+                        motive,
+                        face,
+                    )?;
                     method_terms.push(self.quote_inner(method, Some(method_type), face, n)?);
                 }
                 let mut index_terms = Vec::with_capacity(indices.len());
