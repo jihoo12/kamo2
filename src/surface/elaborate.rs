@@ -1,7 +1,7 @@
 use super::ast::{Declaration, Expr, Pattern, Program as SurfaceProgram};
 use crate::syntax::{ConstructorId, Program, Term, TermId};
 use crate::{Error, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub(crate) fn elaborate(surface: &SurfaceProgram) -> Result<Program> {
     Elaborator::default().program(surface)
@@ -39,6 +39,58 @@ impl Elaborator {
             return Err(Error::plain(format!("ambiguous constructor '{name}'")));
         }
         Ok(constructor)
+    }
+
+    fn validate_constructor_branches(
+        &self,
+        branches: &[super::ast::MatchBranch],
+    ) -> Result<crate::syntax::InductiveId> {
+        let mut family = None;
+        let mut seen = HashSet::new();
+        for branch in branches {
+            let Pattern::Constructor { name, arguments } = &branch.pattern else {
+                return Err(Error::plain(
+                    "match branches must use constructor patterns",
+                ));
+            };
+            let constructor_id = self.resolve_constructor(name)?;
+            let constructor = &self.core.constructors[constructor_id.index()];
+            if arguments.len() != constructor.arguments.len() {
+                return Err(Error::plain(format!(
+                    "constructor '{}' expects {} pattern arguments, found {}",
+                    name,
+                    constructor.arguments.len(),
+                    arguments.len()
+                )));
+            }
+            match family {
+                Some(inductive) if inductive != constructor.inductive => {
+                    return Err(Error::plain(
+                        "match branches must belong to the same inductive family",
+                    ));
+                }
+                None => family = Some(constructor.inductive),
+                _ => {}
+            }
+            if !seen.insert(constructor_id) {
+                return Err(Error::plain(format!(
+                    "duplicate match branch for constructor '{name}'"
+                )));
+            }
+        }
+        let family = family.ok_or_else(|| Error::plain("match must have at least one branch"))?;
+        let inductive = &self.core.inductives[family.index()];
+        if let Some(missing) = inductive
+            .constructors
+            .iter()
+            .find(|constructor| !seen.contains(constructor))
+        {
+            let name = &self.core.constructors[missing.index()].name;
+            return Err(Error::plain(format!(
+                "non-exhaustive match: missing constructor '{name}'"
+            )));
+        }
+        Ok(family)
     }
 
     fn program(mut self, surface: &SurfaceProgram) -> Result<Program> {
@@ -164,11 +216,7 @@ impl Elaborator {
                 ));
             }
             Expr::Match { branches, .. } => {
-                for branch in branches {
-                    if let Pattern::Constructor { name, .. } = &branch.pattern {
-                        self.resolve_constructor(name)?;
-                    }
-                }
+                self.validate_constructor_branches(branches)?;
                 return Err(Error::plain(
                     "surface match is reserved until pattern elaboration is implemented",
                 ));
