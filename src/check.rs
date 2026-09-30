@@ -1051,6 +1051,98 @@ mod inductive_core_tests {
     }
 
     #[test]
+    fn checks_dependent_vec_eliminator() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat_ty = program.alloc(Term::Nat, 0);
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+
+        let zero_index = program.alloc(Term::Zero, 0);
+        let nil =
+            program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+
+        let n_arg = entry(&mut program, "n", Term::Nat);
+        let a_var = program.alloc(Term::Var(1), 0);
+        let head_arg = TelescopeEntry {
+            name: "head".to_owned(),
+            ty: a_var,
+        };
+        let vec_head = program.alloc(Term::Inductive(vec), 0);
+        let a_var = program.alloc(Term::Var(2), 0);
+        let vec_a = program.alloc(Term::App(vec_head, a_var), 0);
+        let n_var = program.alloc(Term::Var(1), 0);
+        let vec_a_n = program.alloc(Term::App(vec_a, n_var), 0);
+        let tail_arg = TelescopeEntry {
+            name: "tail".to_owned(),
+            ty: vec_a_n,
+        };
+        let n_result = program.alloc(Term::Var(2), 0);
+        let suc_n = program.alloc(Term::Suc(n_result), 0);
+        let cons = program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![n_arg, head_arg, tail_arg],
+            vec![suc_n],
+            vec![2],
+        );
+
+        // P = λ n. λ xs. Nat
+        let motive_result = program.alloc(Term::Nat, 0);
+        let motive_xs = program.alloc(Term::Lam(motive_result), 0);
+        let motive = program.alloc(Term::Lam(motive_xs), 0);
+        let nil_method = program.alloc(Term::Zero, 0);
+
+        // cons_case = λ n. λ head. λ tail. λ ih. suc ih
+        let ih = program.alloc(Term::Var(0), 0);
+        let suc_ih = program.alloc(Term::Suc(ih), 0);
+        let cons_method = program.alloc(Term::Lam(suc_ih), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+        let cons_method = program.alloc(Term::Lam(cons_method), 0);
+
+        let bool_ty = program.alloc(Term::Bool, 0);
+        let cons_head = program.alloc(Term::Constructor(cons), 0);
+        let cons_bool = program.alloc(Term::App(cons_head, bool_ty), 0);
+        let zero = program.alloc(Term::Zero, 0);
+        let cons_zero = program.alloc(Term::App(cons_bool, zero), 0);
+        let true_term = program.alloc(Term::True, 0);
+        let cons_true = program.alloc(Term::App(cons_zero, true_term), 0);
+        let nil_head = program.alloc(Term::Constructor(nil), 0);
+        let bool_ty_arg = program.alloc(Term::Bool, 0);
+        let nil_bool = program.alloc(Term::App(nil_head, bool_ty_arg), 0);
+        let singleton = program.alloc(Term::App(cons_true, nil_bool), 0);
+
+        let bool_parameter = program.alloc(Term::Bool, 0);
+        let one_index = program.alloc(Term::Suc(zero), 0);
+        let elim = program.alloc(
+            Term::Elim {
+                inductive: vec,
+                parameters: vec![bool_parameter],
+                motive,
+                methods: vec![nil_method, cons_method],
+                indices: vec![one_index],
+                scrutinee: singleton,
+            },
+            0,
+        );
+        let expected = program.alloc(Term::Nat, 0);
+        program.push_decl("vec-length-one".to_owned(), expected, elim);
+
+        check_all(&program).unwrap();
+    }
+
+    #[test]
     fn checks_indexed_vec_nil_constructor() {
         let mut program = Program::default();
         let type0 = program.alloc(Term::U(0), 0);
