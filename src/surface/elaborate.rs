@@ -796,7 +796,15 @@ mod pattern_tests {
                                             ],
                                         },
                                         body: Expr::Suc(Box::new(Expr::Apply {
-                                            function: Box::new(Expr::Name("length".to_owned())),
+                                            function: Box::new(Expr::Apply {
+                                                function: Box::new(Expr::Apply {
+                                                    function: Box::new(Expr::Name(
+                                                        "length".to_owned(),
+                                                    )),
+                                                    argument: Box::new(Expr::Name("A".to_owned())),
+                                                }),
+                                                argument: Box::new(Expr::Name("m".to_owned())),
+                                            }),
                                             argument: Box::new(Expr::Name("tail".to_owned())),
                                         })),
                                     },
