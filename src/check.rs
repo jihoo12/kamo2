@@ -189,7 +189,8 @@ impl Engine<'_> {
                 let mut family = self.alloc(Val::Inductive(inductive));
                 let mut parameter_values = Vec::with_capacity(parameters.len());
                 for parameter in parameters {
-                    let family_ty = self.force(self.neutral_type(family, ctx.face)?, ctx.face)?;
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
                     let Val::Pi(domain, _) = self.get(family_ty) else {
                         return Err(self.error(t, "malformed inductive parameter telescope"));
                     };
@@ -201,7 +202,8 @@ impl Engine<'_> {
 
                 let mut index_values = Vec::with_capacity(indices.len());
                 for index in indices {
-                    let family_ty = self.force(self.neutral_type(family, ctx.face)?, ctx.face)?;
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
                     let Val::Pi(domain, _) = self.get(family_ty) else {
                         return Err(self.error(t, "malformed inductive index telescope"));
                     };
@@ -216,8 +218,9 @@ impl Engine<'_> {
                 for parameter in parameter_values {
                     motive_domain = self.app(motive_domain, parameter);
                 }
-                for index in &index_values {
-                    let motive_ty = self.force(self.neutral_type(motive_domain, ctx.face)?, ctx.face)?;
+                for _index in &index_values {
+                    let motive_ty = self.neutral_type(motive_domain, ctx.face)?;
+                    let motive_ty = self.force(motive_ty, ctx.face)?;
                     let Val::Pi(domain, _) = self.get(motive_ty) else {
                         return Err(self.error(t, "malformed eliminator motive index telescope"));
                     };
