@@ -13,6 +13,21 @@ pub struct Declaration {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MatchBranch {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pattern {
+    Name(String),
+    Constructor {
+        name: String,
+        arguments: Vec<Pattern>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
     Name(String),
     Universe(u32),
@@ -44,5 +59,9 @@ pub enum Expr {
         condition: Box<Expr>,
         then_branch: Box<Expr>,
         else_branch: Box<Expr>,
+    },
+    Match {
+        scrutinee: Box<Expr>,
+        branches: Vec<MatchBranch>,
     },
 }
