@@ -166,9 +166,70 @@ impl Engine<'_> {
             Term::Bool | Term::Nat => Val::U(0),
             Term::Inductive(id) => return Ok(self.inductive_type(id)),
             Term::Constructor(id) => return Ok(self.constructor_type(id)),
-            Term::Elim { .. } => {
-                return Err(self.error(t, "generic inductive eliminator typing is not implemented yet"));
-            },
+            Term::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let declaration = self.program.inductives[inductive.index()].clone();
+                if parameters.len() != declaration.parameters.len() {
+                    return Err(self.error(t, "wrong number of inductive parameters"));
+                }
+                if indices.len() != declaration.indices.len() {
+                    return Err(self.error(t, "wrong number of inductive indices"));
+                }
+                if methods.len() != declaration.constructors.len() {
+                    return Err(self.error(t, "wrong number of eliminator methods"));
+                }
+
+                let mut family = self.alloc(Val::Inductive(inductive));
+                let mut parameter_values = Vec::with_capacity(parameters.len());
+                for parameter in parameters {
+                    let family_ty = self.force(self.neutral_type(family, ctx.face)?, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed inductive parameter telescope"));
+                    };
+                    self.check(parameter, domain, ctx)?;
+                    let parameter = self.thunk(parameter, ctx.env);
+                    parameter_values.push(parameter);
+                    family = self.app(family, parameter);
+                }
+
+                let mut index_values = Vec::with_capacity(indices.len());
+                for index in indices {
+                    let family_ty = self.force(self.neutral_type(family, ctx.face)?, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed inductive index telescope"));
+                    };
+                    self.check(index, domain, ctx)?;
+                    let index = self.thunk(index, ctx.env);
+                    index_values.push(index);
+                    family = self.app(family, index);
+                }
+                self.check(scrutinee, family, ctx)?;
+
+                let mut motive_domain = self.alloc(Val::Inductive(inductive));
+                for parameter in parameter_values {
+                    motive_domain = self.app(motive_domain, parameter);
+                }
+                for index in &index_values {
+                    let motive_ty = self.force(self.neutral_type(motive_domain, ctx.face)?, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(motive_ty) else {
+                        return Err(self.error(t, "malformed eliminator motive index telescope"));
+                    };
+                    let x = self.variable(domain);
+                    motive_domain = self.app(motive_domain, x);
+                }
+                self.check_motive(motive, motive_domain, ctx)?;
+
+                return Err(self.error(
+                    t,
+                    "generic inductive eliminator method checking is not implemented yet",
+                ));
+            }
             Term::True | Term::False => Val::Bool,
             Term::Zero => Val::Nat,
             Term::Suc(n) => {
