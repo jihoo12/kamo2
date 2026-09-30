@@ -1167,6 +1167,18 @@ impl<'a> Engine<'a> {
                 }
             }
             Val::If(p, _, _, c) | Val::NatElim(p, _, _, c) => Ok(self.app(p, c)),
+            Val::Elim {
+                motive,
+                indices,
+                scrutinee,
+                ..
+            } => {
+                let mut result = motive;
+                for index in indices {
+                    result = self.app(result, index);
+                }
+                Ok(self.app(result, scrutinee))
+            }
             Val::PApp(p, d) => {
                 let ty = self.neutral_type(p, face)?;
                 let ty = self.force(ty, face)?;
