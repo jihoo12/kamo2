@@ -53,6 +53,13 @@ pub(crate) enum Val {
     Nat,
     Inductive(InductiveId),
     Constructor(ConstructorId),
+    Elim {
+        inductive: InductiveId,
+        motive: ValId,
+        methods: Vec<ValId>,
+        indices: Vec<ValId>,
+        scrutinee: ValId,
+    },
     Zero,
     Suc(ValId),
     If(ValId, ValId, ValId, ValId),
@@ -429,6 +436,19 @@ impl<'a> Engine<'a> {
                 self.sub(b, s),
                 self.sub(c, s),
             ),
+            Val::Elim {
+                inductive,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::Elim {
+                inductive,
+                motive: self.sub(motive, s),
+                methods: methods.into_iter().map(|method| self.sub(method, s)).collect(),
+                indices: indices.into_iter().map(|index| self.sub(index, s)).collect(),
+                scrutinee: self.sub(scrutinee, s),
+            },
             Val::PApp(p, d) => Val::PApp(self.sub(p, s), self.sub_dim(s, d)),
             Val::System(a, bs) => {
                 let a = self.sub(a, s);
@@ -508,6 +528,19 @@ impl<'a> Engine<'a> {
             Term::Nat => Val::Nat,
             Term::Inductive(id) => Val::Inductive(id),
             Term::Constructor(id) => Val::Constructor(id),
+            Term::Elim {
+                inductive,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::Elim {
+                inductive,
+                motive: self.thunk(motive, e),
+                methods: methods.into_iter().map(|method| self.thunk(method, e)).collect(),
+                indices: indices.into_iter().map(|index| self.thunk(index, e)).collect(),
+                scrutinee: self.thunk(scrutinee, e),
+            },
             Term::Zero => Val::Zero,
             Term::Pi(a, b) => {
                 let a = self.thunk(a, e);
