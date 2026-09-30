@@ -219,8 +219,9 @@ impl Engine<'_> {
                 self.check(motive, motive_type, ctx)?;
                 let motive_value = self.thunk(motive, ctx.env);
 
-                for (method, constructor) in
-                    methods.into_iter().zip(declaration.constructors.iter().copied())
+                for (method, constructor) in methods
+                    .into_iter()
+                    .zip(declaration.constructors.iter().copied())
                 {
                     let method_type = self.generic_method_type(
                         inductive,
@@ -593,8 +594,7 @@ impl Engine<'_> {
         )?;
 
         if constructor.recursive_arguments.contains(&index) {
-            let Some((recursive_family, application)) =
-                self.inductive_application(domain, face)?
+            let Some((recursive_family, application)) = self.inductive_application(domain, face)?
             else {
                 return Err(Error::plain(
                     "recursive constructor argument is not an inductive family",
@@ -611,13 +611,7 @@ impl Engine<'_> {
             }
             ih_type = self.app(ih_type, value);
             let ih = self.fresh_term();
-            body = self.alloc(Val::Pi(
-                ih_type,
-                Binder {
-                    var: ih,
-                    body,
-                },
-            ));
+            body = self.alloc(Val::Pi(ih_type, Binder { var: ih, body }));
         }
 
         Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
@@ -1019,8 +1013,7 @@ mod inductive_core_tests {
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
         let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred = entry(&mut program, "pred", Term::Inductive(nat));
-        let usuc =
-            program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+        let usuc = program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
 
         let nat_result = program.alloc(Term::Nat, 0);
         let motive = program.alloc(Term::Lam(nat_result), 0);
@@ -1069,8 +1062,7 @@ mod inductive_core_tests {
         );
 
         let zero_index = program.alloc(Term::Zero, 0);
-        let nil =
-            program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
 
         let n_arg = entry(&mut program, "n", Term::Nat);
         let a_var = program.alloc(Term::Var(1), 0);
