@@ -120,8 +120,7 @@ impl CheckedProgram {
             return Err(Error::plain("source size budget exceeded (maximum 4 MiB)"));
         }
         let surface = surface::parser::parse(source)?;
-        let core = surface::to_core_source(&surface)?;
-        let program = syntax::parse(&core)?;
+        let program = surface::elaborate(&surface)?;
         Self::check_program(program, options)
     }
 
