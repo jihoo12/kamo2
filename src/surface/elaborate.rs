@@ -221,16 +221,16 @@ impl Elaborator {
             let mut pushed = 0;
             for (argument, entry) in arguments.iter().zip(&constructor.arguments) {
                 let Pattern::Name(name) = argument else {
-                    return Err(Error::plain("nested constructor patterns are not supported yet"));
+                    return Err(Error::plain(
+                        "nested constructor patterns are not supported yet",
+                    ));
                 };
                 let ty = self.surface_type(entry.ty)?;
                 self.locals.push((name.clone(), ty));
                 pushed += 1;
                 if constructor.recursive_arguments.contains(&(pushed - 1)) {
-                    self.locals.push((
-                        format!("<ih:{}>", name),
-                        expected.clone(),
-                    ));
+                    self.locals
+                        .push((format!("<ih:{}>", name), expected.clone()));
                     pushed += 1;
                 }
             }
@@ -357,9 +357,8 @@ impl Elaborator {
                 scrutinee,
                 branches,
             } => {
-                let expected = expected.ok_or_else(|| {
-                    Error::plain("cannot infer surface match result type yet")
-                })?;
+                let expected = expected
+                    .ok_or_else(|| Error::plain("cannot infer surface match result type yet"))?;
                 return self.lower_match(scrutinee, branches, expected);
             }
         };
@@ -577,7 +576,7 @@ mod pattern_tests {
     }
 
     #[test]
-    fn surface_match_remains_reserved_before_lowering() {
+    fn lowers_non_dependent_surface_match_to_eliminator() {
         let mut core = Program::default();
         let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
         core.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
@@ -624,7 +623,24 @@ mod pattern_tests {
                 },
             }],
         };
-        let error = elaborate_into(core, &surface).unwrap_err();
-        assert!(error.message.contains("surface match is reserved"));
+        let program = elaborate_into(core, &surface).unwrap();
+        let body = program.decls[0].body;
+        let Term::Lam(match_term) = program.terms.get(body).term else {
+            panic!("expected function body");
+        };
+        let Term::Elim {
+            inductive,
+            parameters,
+            methods,
+            indices,
+            ..
+        } = &program.terms.get(match_term).term
+        else {
+            panic!("expected generic eliminator");
+        };
+        assert_eq!(*inductive, nat);
+        assert!(parameters.is_empty());
+        assert!(indices.is_empty());
+        assert_eq!(methods.len(), 2);
     }
 }
