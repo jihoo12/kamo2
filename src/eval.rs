@@ -1600,7 +1600,21 @@ mod tests {
         let ty = e.neutral_type(forced, face).unwrap();
         assert!(e.conv(ty, nat_result, None, face).unwrap());
         assert!(e.same(left, right, face, 128).unwrap());
-        let quoted = e.quote(forced, nat_result, face).unwrap();
+        let Val::Var(scrutinee_var, _) = e.get(scrutinee) else {
+            unreachable!();
+        };
+        let function = e.alloc(Val::Lam(Binder {
+            var: scrutinee_var,
+            body: forced,
+        }));
+        let function_type = e.alloc(Val::Pi(
+            family,
+            Binder {
+                var: scrutinee_var,
+                body: nat_result,
+            },
+        ));
+        let quoted = e.quote(function, function_type, face).unwrap();
         assert!(quoted.contains("(elim UserNat"));
         assert!(quoted.contains("(methods "));
     }
