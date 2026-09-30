@@ -602,10 +602,12 @@ mod inductive_metadata_tests {
         let declaration = &program.inductives[vec.index()];
         assert_eq!(declaration.parameters.len(), 1);
         assert_eq!(declaration.indices.len(), 1);
-        assert_eq!(declaration.constructors[0].result_indices.len(), 1);
-        assert_eq!(declaration.constructors[1].result_indices.len(), 1);
-        assert_eq!(declaration.constructors[0].id.index(), 0);
-        assert_eq!(declaration.constructors[1].id.index(), 1);
+        let nil = &program.constructors[declaration.constructors[0].index()];
+        let cons = &program.constructors[declaration.constructors[1].index()];
+        assert_eq!(nil.result_indices.len(), 1);
+        assert_eq!(cons.result_indices.len(), 1);
+        assert_eq!(nil.id.index(), 0);
+        assert_eq!(cons.id.index(), 1);
         assert_eq!(program.constructors.len(), 2);
     }
 }
