@@ -666,72 +666,6 @@ impl<'a> Engine<'a> {
                         return Ok(self.alloc(Val::Snd(p)));
                     }
                 }
-                Val::Elim {
-                    inductive,
-                    motive,
-                    methods,
-                    indices: _,
-                    scrutinee,
-                } => {
-                    let scrutinee = self.force(scrutinee, face)?;
-                    let (head, spine) = self.application_spine(scrutinee);
-                    let head = self.force(head, face)?;
-                    let Val::Constructor(constructor_id) = self.get(head) else {
-                        continue;
-                    };
-                    let constructor = self.program.constructors[constructor_id.index()].clone();
-                    if constructor.inductive != inductive {
-                        return Err(Error::plain(
-                            "internal error: eliminator constructor belongs to another family",
-                        ));
-                    }
-                    let family = self.program.inductives[inductive.index()].clone();
-                    let parameter_count = family.parameters.len();
-                    if spine.len() != parameter_count + constructor.arguments.len() {
-                        return Err(Error::plain(
-                            "internal error: malformed constructor application in eliminator",
-                        ));
-                    }
-                    let arguments = &spine[parameter_count..];
-                    let method_index = family
-                        .constructors
-                        .iter()
-                        .position(|id| *id == constructor_id)
-                        .ok_or_else(|| Error::plain(
-                            "internal error: constructor missing from its inductive family",
-                        ))?;
-                    let mut method = *methods.get(method_index).ok_or_else(|| {
-                        Error::plain("internal error: missing eliminator method")
-                    })?;
-                    for (argument_index, argument) in arguments.iter().copied().enumerate() {
-                        method = self.app(method, argument);
-                        if constructor.recursive_arguments.contains(&argument_index) {
-                            let argument_type = self.neutral_type(argument, face)?;
-                            let Some((recursive_family, application)) =
-                                self.inductive_application(argument_type, face)?
-                            else {
-                                return Err(Error::plain(
-                                    "internal error: recursive constructor argument is not an inductive family",
-                                ));
-                            };
-                            if recursive_family != inductive || application.len() < parameter_count {
-                                return Err(Error::plain(
-                                    "internal error: recursive constructor argument has the wrong family",
-                                ));
-                            }
-                            let recursive_indices = application[parameter_count..].to_vec();
-                            let recursive = self.alloc(Val::Elim {
-                                inductive,
-                                motive,
-                                methods: methods.clone(),
-                                indices: recursive_indices,
-                                scrutinee: argument,
-                            });
-                            method = self.app(method, recursive);
-                        }
-                    }
-                    Some(method)
-                }
                 Val::PApp(p, d) => {
                     let p = self.beta_head(p)?;
                     if let Val::PLam(b) = self.get(p) {
@@ -938,6 +872,72 @@ impl<'a> Engine<'a> {
                         }
                         _ => None,
                     }
+                }
+                Val::Elim {
+                    inductive,
+                    motive,
+                    methods,
+                    indices: _,
+                    scrutinee,
+                } => {
+                    let scrutinee = self.force(scrutinee, face)?;
+                    let (head, spine) = self.application_spine(scrutinee);
+                    let head = self.force(head, face)?;
+                    let Val::Constructor(constructor_id) = self.get(head) else {
+                        continue;
+                    };
+                    let constructor = self.program.constructors[constructor_id.index()].clone();
+                    if constructor.inductive != inductive {
+                        return Err(Error::plain(
+                            "internal error: eliminator constructor belongs to another family",
+                        ));
+                    }
+                    let family = self.program.inductives[inductive.index()].clone();
+                    let parameter_count = family.parameters.len();
+                    if spine.len() != parameter_count + constructor.arguments.len() {
+                        return Err(Error::plain(
+                            "internal error: malformed constructor application in eliminator",
+                        ));
+                    }
+                    let arguments = &spine[parameter_count..];
+                    let method_index = family
+                        .constructors
+                        .iter()
+                        .position(|id| *id == constructor_id)
+                        .ok_or_else(|| Error::plain(
+                            "internal error: constructor missing from its inductive family",
+                        ))?;
+                    let mut method = *methods.get(method_index).ok_or_else(|| {
+                        Error::plain("internal error: missing eliminator method")
+                    })?;
+                    for (argument_index, argument) in arguments.iter().copied().enumerate() {
+                        method = self.app(method, argument);
+                        if constructor.recursive_arguments.contains(&argument_index) {
+                            let argument_type = self.neutral_type(argument, face)?;
+                            let Some((recursive_family, application)) =
+                                self.inductive_application(argument_type, face)?
+                            else {
+                                return Err(Error::plain(
+                                    "internal error: recursive constructor argument is not an inductive family",
+                                ));
+                            };
+                            if recursive_family != inductive || application.len() < parameter_count {
+                                return Err(Error::plain(
+                                    "internal error: recursive constructor argument has the wrong family",
+                                ));
+                            }
+                            let recursive_indices = application[parameter_count..].to_vec();
+                            let recursive = self.alloc(Val::Elim {
+                                inductive,
+                                motive,
+                                methods: methods.clone(),
+                                indices: recursive_indices,
+                                scrutinee: argument,
+                            });
+                            method = self.app(method, recursive);
+                        }
+                    }
+                    Some(method)
                 }
                 Val::PApp(p, d) => {
                     let p = self.force(p, face)?;
