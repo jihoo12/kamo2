@@ -337,36 +337,32 @@ impl Elaborator {
                 Term::Lam(body?)
             }
             Expr::Apply { function, argument } => {
-                if let Expr::Name(function_name) = &**function {
-                    if self.current_definition.as_ref() == Some(function_name) {
-                        let Expr::Name(argument_name) = &**argument else {
-                            return Err(Error::plain(
-                                "recursive calls must target a structural argument",
-                            ));
-                        };
-                        let ih = self.recursive_calls.get(argument_name).ok_or_else(|| {
-                            Error::plain("recursive call is not on a structurally smaller argument")
-                        })?;
-                        let index = self
-                            .locals
-                            .iter()
-                            .rev()
-                            .position(|(local, _)| local == ih)
-                            .ok_or_else(|| {
-                                Error::plain("recursive induction hypothesis escaped")
-                            })?;
-                        Term::Var(index)
-                    } else {
-                        let function_ty = self.infer(function).ok();
-                        let function = self.term(function)?;
-                        let argument = match function_ty.as_ref() {
-                            Some(Expr::Pi { domain, .. }) => {
-                                self.term_expected(argument, Some(domain))?
-                            }
-                            _ => self.term(argument)?,
-                        };
-                        Term::App(function, argument)
-                    }
+                let mut head = expr;
+                let mut recursive_arguments = Vec::new();
+                while let Expr::Apply { function, argument } = head {
+                    recursive_arguments.push(&**argument);
+                    head = function;
+                }
+                recursive_arguments.reverse();
+
+                if let Expr::Name(function_name) = head
+                    && self.current_definition.as_ref() == Some(function_name)
+                {
+                    let Some(Expr::Name(argument_name)) = recursive_arguments.last() else {
+                        return Err(Error::plain(
+                            "recursive calls must target a structural argument",
+                        ));
+                    };
+                    let ih = self.recursive_calls.get(argument_name).ok_or_else(|| {
+                        Error::plain("recursive call is not on a structurally smaller argument")
+                    })?;
+                    let index = self
+                        .locals
+                        .iter()
+                        .rev()
+                        .position(|(local, _)| local == ih)
+                        .ok_or_else(|| Error::plain("recursive induction hypothesis escaped"))?;
+                    Term::Var(index)
                 } else {
                     let function_ty = self.infer(function).ok();
                     let function = self.term(function)?;
