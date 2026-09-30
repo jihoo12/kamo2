@@ -1,4 +1,4 @@
-use super::ast::{Declaration, Expr, Program as SurfaceProgram};
+use super::ast::{Declaration, Expr, Pattern, Program as SurfaceProgram};
 use crate::syntax::{ConstructorId, Program, Term, TermId};
 use crate::{Error, Result};
 use std::collections::HashMap;
@@ -163,7 +163,12 @@ impl Elaborator {
                     "surface if is reserved until motive synthesis is implemented",
                 ));
             }
-            Expr::Match { .. } => {
+            Expr::Match { branches, .. } => {
+                for branch in branches {
+                    if let Pattern::Constructor { name, .. } = &branch.pattern {
+                        self.resolve_constructor(name)?;
+                    }
+                }
                 return Err(Error::plain(
                     "surface match is reserved until pattern elaboration is implemented",
                 ));
@@ -292,7 +297,6 @@ fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
         _ => expr.clone(),
     }
 }
-
 
 #[cfg(test)]
 mod pattern_tests {
