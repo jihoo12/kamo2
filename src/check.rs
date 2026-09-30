@@ -732,7 +732,6 @@ impl Engine<'_> {
     }
 }
 
-
 #[cfg(test)]
 mod inductive_core_tests {
     use super::*;
