@@ -517,7 +517,7 @@ mod pattern_tests {
                 name: "f".to_owned(),
                 ty: Some(Expr::Pi {
                     parameter: None,
-                    domain: Box::new(Expr::Nat),
+                    domain: Box::new(Expr::Name("UserNat".to_owned())),
                     codomain: Box::new(Expr::Nat),
                 }),
                 value: Expr::Lambda {
