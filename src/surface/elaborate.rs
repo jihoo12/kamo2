@@ -676,6 +676,30 @@ mod pattern_tests {
     }
 
     #[test]
+    fn parses_and_lowers_structural_recursion_end_to_end() {
+        let (core, _) = user_nat_core();
+        let surface = crate::surface::parser::parse(
+            "def f (n : UserNat) : Nat = match n { uzero => zero; usuc pred => f pred }",
+        )
+        .unwrap();
+        let program = elaborate_into(core, &surface).unwrap();
+
+        let Term::Lam(elim) = program.terms.get(program.decls[0].body).term else {
+            panic!("expected function body");
+        };
+        let Term::Elim { methods, .. } = &program.terms.get(elim).term else {
+            panic!("expected generic eliminator");
+        };
+        let Term::Lam(inner) = program.terms.get(methods[1]).term else {
+            panic!("expected constructor argument binder");
+        };
+        let Term::Lam(body) = program.terms.get(inner).term else {
+            panic!("expected induction hypothesis binder");
+        };
+        assert!(matches!(program.terms.get(body).term, Term::Var(0)));
+    }
+
+    #[test]
     fn resolves_constructor_patterns_from_core_metadata() {
         let mut core = Program::default();
         let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
