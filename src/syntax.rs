@@ -97,6 +97,7 @@ pub(crate) struct Program {
     pub terms: Arena<TermId, Node>,
     pub decls: Vec<Decl>,
     pub inductives: Vec<InductiveDecl>,
+    pub constructors: Vec<ConstructorDecl>,
 }
 
 impl Program {
@@ -117,23 +118,24 @@ impl Program {
         constructors: Vec<(String, Telescope, Vec<TermId>)>,
     ) -> InductiveId {
         let id = InductiveId::new(self.inductives.len());
-        let constructors = constructors
-            .into_iter()
-            .enumerate()
-            .map(|(index, (name, arguments, result_indices))| ConstructorDecl {
-                id: ConstructorId::new(index),
+        let mut constructor_decls = Vec::with_capacity(constructors.len());
+        for (name, arguments, result_indices) in constructors {
+            let constructor = ConstructorDecl {
+                id: ConstructorId::new(self.constructors.len()),
                 name,
                 arguments,
                 result_indices,
-            })
-            .collect();
+            };
+            self.constructors.push(constructor.clone());
+            constructor_decls.push(constructor);
+        }
         self.inductives.push(InductiveDecl {
             id,
             name,
             universe,
             parameters,
             indices,
-            constructors,
+            constructors: constructor_decls,
         });
         id
     }
