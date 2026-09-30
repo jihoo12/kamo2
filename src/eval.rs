@@ -1488,7 +1488,7 @@ mod tests {
     fn generic_inductive_eliminator_reduces_recursive_constructor() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred_ty = program.alloc(Term::Inductive(nat), 0);
         let pred = TelescopeEntry {
             name: "pred".to_owned(),
@@ -1546,7 +1546,7 @@ mod tests {
     fn neutral_generic_eliminator_has_type_quotes_and_compares_structurally() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred_ty = program.alloc(Term::Inductive(nat), 0);
         let pred = TelescopeEntry {
             name: "pred".to_owned(),
