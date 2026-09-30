@@ -2,7 +2,7 @@
 use crate::arena::{Arena, Key, key};
 use crate::face::{Dim, FaceId, Faces};
 use crate::hash::IdMap as HashMap;
-use crate::syntax::{D, F, Program, Term, TermId};
+use crate::syntax::{ConstructorId, D, F, InductiveId, Program, TelescopeEntry, Term, TermId};
 use crate::{Error, Result, Statistics};
 key!(ValId);
 key!(EnvId);
@@ -51,6 +51,8 @@ pub(crate) enum Val {
     True,
     False,
     Nat,
+    Inductive(InductiveId),
+    Constructor(ConstructorId),
     Zero,
     Suc(ValId),
     If(ValId, ValId, ValId, ValId),
@@ -266,7 +268,7 @@ impl<'a> Engine<'a> {
     fn sub_uncached(&mut self, v: ValId, s: SubId) -> ValId {
         if self.optimized {
             match self.get(v) {
-                Val::U(_) | Val::Bool | Val::Nat | Val::True | Val::False | Val::Zero => return v,
+                Val::U(_) | Val::Bool | Val::Nat | Val::Inductive(_) | Val::Constructor(_) | Val::True | Val::False | Val::Zero => return v,
                 Val::Susp(t, e)
                     if matches!(self.program.terms.get(t).term, Term::Global(_))
                         || (self.envs.get(e).terms.is_empty()
@@ -490,6 +492,8 @@ impl<'a> Engine<'a> {
             Term::True => Val::True,
             Term::False => Val::False,
             Term::Nat => Val::Nat,
+            Term::Inductive(id) => Val::Inductive(id),
+            Term::Constructor(id) => Val::Constructor(id),
             Term::Zero => Val::Zero,
             Term::Pi(a, b) => {
                 let a = self.thunk(a, e);
@@ -664,7 +668,9 @@ impl<'a> Engine<'a> {
             (Val::U(x), Val::U(y)) => Ok(x == y),
             (Val::Bool, Val::Bool)
             | (Val::Nat, Val::Nat)
-            | (Val::Zero, Val::Zero)
+            | (Val::Inductive(x), Val::Inductive(y)) if x == y => Ok(true),
+            (Val::Constructor(x), Val::Constructor(y)) if x == y => Ok(true),
+            (Val::Zero, Val::Zero)
             | (Val::True, Val::True)
             | (Val::False, Val::False) => Ok(true),
             (Val::App(f, x), Val::App(g, y))
@@ -925,6 +931,81 @@ impl<'a> Engine<'a> {
         }
         Ok(v)
     }
+    fn telescope_type(
+        &mut self,
+        entries: &[TelescopeEntry],
+        index: usize,
+        env: EnvId,
+        tail: ValId,
+    ) -> ValId {
+        if index == entries.len() {
+            return tail;
+        }
+        let domain = self.thunk(entries[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+        let body = self.telescope_type(entries, index + 1, next, tail);
+        self.alloc(Val::Pi(domain, Binder { var, body }))
+    }
+
+    pub fn inductive_type(&mut self, id: InductiveId) -> ValId {
+        let declaration = self.program.inductives[id.index()].clone();
+        let env = self.env(Env::default());
+        let universe = self.alloc(Val::U(declaration.universe));
+        let indices = self.telescope_type(&declaration.indices, 0, env, universe);
+        self.telescope_type(&declaration.parameters, 0, env, indices)
+    }
+
+    pub fn constructor_type(&mut self, id: ConstructorId) -> ValId {
+        let constructor = self.program.constructors[id.index()].clone();
+        let family = self.program.inductives[constructor.inductive.index()].clone();
+        let env = self.env(Env::default());
+
+        let mut result = self.alloc(Val::Inductive(constructor.inductive));
+        let mut parameter_values = Vec::with_capacity(family.parameters.len());
+        let mut parameter_env = self.environment(env);
+        for entry in &family.parameters {
+            let ty_env = self.env(parameter_env.clone());
+            let ty = self.thunk(entry.ty, ty_env);
+            let value = self.variable(ty);
+            parameter_env.terms.push(value);
+            parameter_values.push(value);
+            result = self.app(result, value);
+        }
+
+        let mut argument_env = parameter_env.clone();
+        let mut argument_values = Vec::with_capacity(constructor.arguments.len());
+        for entry in &constructor.arguments {
+            let ty_env = self.env(argument_env.clone());
+            let ty = self.thunk(entry.ty, ty_env);
+            let value = self.variable(ty);
+            argument_env.terms.push(value);
+            argument_values.push(value);
+        }
+        let result_env = self.env(argument_env);
+        for index in &constructor.result_indices {
+            result = self.app(result, self.thunk(*index, result_env));
+        }
+
+        let mut ty = result;
+        for (entry, value) in constructor.arguments.iter().zip(argument_values).rev() {
+            let ty_env = self.env(parameter_env.clone());
+            let domain = self.thunk(entry.ty, ty_env);
+            let Val::Var(var, _) = self.get(value) else { unreachable!() };
+            ty = self.alloc(Val::Pi(domain, Binder { var, body: ty }));
+            parameter_env.terms.push(value);
+        }
+        for (entry, value) in family.parameters.iter().zip(parameter_values).rev() {
+            let domain = self.thunk(entry.ty, env);
+            let Val::Var(var, _) = self.get(value) else { unreachable!() };
+            ty = self.alloc(Val::Pi(domain, Binder { var, body: ty }));
+        }
+        ty
+    }
+
     pub fn neutral_type(&mut self, v: ValId, face: FaceId) -> Result<ValId> {
         let v = self.force(v, face)?;
         match self.get(v) {
