@@ -43,6 +43,7 @@ pub(crate) enum Term {
     #[allow(dead_code)]
     Elim {
         inductive: InductiveId,
+        parameters: Vec<TermId>,
         motive: TermId,
         methods: Vec<TermId>,
         indices: Vec<TermId>,
