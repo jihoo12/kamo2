@@ -164,6 +164,8 @@ impl Engine<'_> {
                     .ok_or_else(|| self.error(t, "universe level overflow"))?,
             ),
             Term::Bool | Term::Nat => Val::U(0),
+            Term::Inductive(id) => return Ok(self.inductive_type(id)),
+            Term::Constructor(id) => return Ok(self.constructor_type(id)),
             Term::True | Term::False => Val::Bool,
             Term::Zero => Val::Nat,
             Term::Suc(n) => {
