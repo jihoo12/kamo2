@@ -343,16 +343,16 @@ impl Elaborator {
                             ));
                         };
                         let ih = self.recursive_calls.get(argument_name).ok_or_else(|| {
-                            Error::plain(
-                                "recursive call is not on a structurally smaller argument",
-                            )
+                            Error::plain("recursive call is not on a structurally smaller argument")
                         })?;
                         let index = self
                             .locals
                             .iter()
                             .rev()
                             .position(|(local, _)| local == ih)
-                            .ok_or_else(|| Error::plain("recursive induction hypothesis escaped"))?;
+                            .ok_or_else(|| {
+                                Error::plain("recursive induction hypothesis escaped")
+                            })?;
                         Term::Var(index)
                     } else {
                         let function_ty = self.infer(function).ok();
