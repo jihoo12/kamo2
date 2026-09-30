@@ -214,20 +214,9 @@ impl Engine<'_> {
                 }
                 self.check(scrutinee, family, ctx)?;
 
-                let mut motive_domain = self.alloc(Val::Inductive(inductive));
-                for parameter in parameter_values {
-                    motive_domain = self.app(motive_domain, parameter);
-                }
-                for _index in &index_values {
-                    let motive_ty = self.neutral_type(motive_domain, ctx.face)?;
-                    let motive_ty = self.force(motive_ty, ctx.face)?;
-                    let Val::Pi(domain, _) = self.get(motive_ty) else {
-                        return Err(self.error(t, "malformed eliminator motive index telescope"));
-                    };
-                    let x = self.variable(domain);
-                    motive_domain = self.app(motive_domain, x);
-                }
-                self.check_motive(motive, motive_domain, ctx)?;
+                let motive_type =
+                    self.generic_motive_type(inductive, &parameter_values, declaration.universe);
+                self.check(motive, motive_type, ctx)?;
 
                 return Err(self.error(
                     t,
@@ -516,6 +505,72 @@ impl Engine<'_> {
         };
         Ok(self.alloc(ty))
     }
+    fn generic_motive_type(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        parameters: &[ValId],
+        universe: u32,
+    ) -> ValId {
+        let declaration = self.program.inductives[inductive.index()].clone();
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_generic_motive_indices(
+            inductive,
+            parameters,
+            &declaration.indices,
+            0,
+            env,
+            universe,
+        )
+    }
+
+    fn bind_generic_motive_indices(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        parameters: &[ValId],
+        indices: &[crate::syntax::TelescopeEntry],
+        index: usize,
+        env: EnvId,
+        universe: u32,
+    ) -> ValId {
+        if index == indices.len() {
+            let values = self.environment(env).terms;
+            let mut family = self.alloc(Val::Inductive(inductive));
+            for parameter in parameters {
+                family = self.app(family, *parameter);
+            }
+            for value in values.iter().skip(parameters.len()) {
+                family = self.app(family, *value);
+            }
+            let scrutinee = self.fresh_term();
+            let scrutinee_value = self.alloc(Val::Var(scrutinee, Some(family)));
+            let codomain = self.alloc(Val::U(universe));
+            return self.alloc(Val::Pi(
+                family,
+                Binder {
+                    var: scrutinee,
+                    body: codomain,
+                },
+            ));
+        }
+        let domain = self.thunk(indices[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+        let body = self.bind_generic_motive_indices(
+            inductive,
+            parameters,
+            indices,
+            index + 1,
+            next,
+            universe,
+        );
+        self.alloc(Val::Pi(domain, Binder { var, body }))
+    }
+
     fn check_motive(&mut self, p: TermId, domain: ValId, ctx: &Context) -> Result<()> {
         // A syntactic lambda is permitted here without a universe annotation.
         if let Term::Lam(body) = self.program.terms.get(p).term {
