@@ -1,10 +1,19 @@
 use super::ast::{Declaration, Expr, Program as SurfaceProgram};
-use crate::syntax::{Program, Term, TermId};
+use crate::syntax::{ConstructorId, Program, Term, TermId};
 use crate::{Error, Result};
 use std::collections::HashMap;
 
 pub(crate) fn elaborate(surface: &SurfaceProgram) -> Result<Program> {
     Elaborator::default().program(surface)
+}
+
+#[cfg(test)]
+fn elaborate_into(core: Program, surface: &SurfaceProgram) -> Result<Program> {
+    Elaborator {
+        core,
+        ..Elaborator::default()
+    }
+    .program(surface)
 }
 
 #[derive(Default)]
@@ -16,6 +25,22 @@ struct Elaborator {
 }
 
 impl Elaborator {
+    fn resolve_constructor(&self, name: &str) -> Result<ConstructorId> {
+        let mut matches = self
+            .core
+            .constructors
+            .iter()
+            .filter(|constructor| constructor.name == name)
+            .map(|constructor| constructor.id);
+        let Some(constructor) = matches.next() else {
+            return Err(Error::plain(format!("unknown constructor '{name}'")));
+        };
+        if matches.next().is_some() {
+            return Err(Error::plain(format!("ambiguous constructor '{name}'")));
+        }
+        Ok(constructor)
+    }
+
     fn program(mut self, surface: &SurfaceProgram) -> Result<Program> {
         for declaration in &surface.declarations {
             self.declaration(declaration)?;
@@ -265,5 +290,76 @@ fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
         },
         Expr::Suc(value) => Expr::Suc(Box::new(substitute(value, name, replacement))),
         _ => expr.clone(),
+    }
+}
+
+
+#[cfg(test)]
+mod pattern_tests {
+    use super::*;
+    use crate::surface::ast::{MatchBranch, Pattern};
+    use crate::syntax::TelescopeEntry;
+
+    #[test]
+    fn resolves_constructor_patterns_from_core_metadata() {
+        let mut core = Program::default();
+        let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let zero = core.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = core.alloc(Term::Inductive(nat), 0);
+        let pred = TelescopeEntry {
+            name: "pred".to_owned(),
+            ty: pred_ty,
+        };
+        core.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let elaborator = Elaborator {
+            core,
+            ..Elaborator::default()
+        };
+        assert_eq!(elaborator.resolve_constructor("uzero").unwrap(), zero);
+        assert!(elaborator.resolve_constructor("missing").is_err());
+    }
+
+    #[test]
+    fn rejects_ambiguous_constructor_names() {
+        let mut core = Program::default();
+        let left = core.push_inductive("Left".to_owned(), 0, vec![], vec![]);
+        let right = core.push_inductive("Right".to_owned(), 0, vec![], vec![]);
+        core.push_constructor(left, "same".to_owned(), vec![], vec![], vec![]);
+        core.push_constructor(right, "same".to_owned(), vec![], vec![], vec![]);
+
+        let elaborator = Elaborator {
+            core,
+            ..Elaborator::default()
+        };
+        let error = elaborator.resolve_constructor("same").unwrap_err();
+        assert!(error.message.contains("ambiguous constructor"));
+    }
+
+    #[test]
+    fn surface_match_remains_reserved_before_lowering() {
+        let core = Program::default();
+        let surface = SurfaceProgram {
+            declarations: vec![Declaration {
+                name: "f".to_owned(),
+                ty: Some(Expr::Pi {
+                    parameter: None,
+                    domain: Box::new(Expr::Nat),
+                    codomain: Box::new(Expr::Nat),
+                }),
+                value: Expr::Lambda {
+                    parameter: "n".to_owned(),
+                    body: Box::new(Expr::Match {
+                        scrutinee: Box::new(Expr::Name("n".to_owned())),
+                        branches: vec![MatchBranch {
+                            pattern: Pattern::Name("zero".to_owned()),
+                            body: Expr::Zero,
+                        }],
+                    }),
+                },
+            }],
+        };
+        let error = elaborate_into(core, &surface).unwrap_err();
+        assert!(error.message.contains("surface match is reserved"));
     }
 }
