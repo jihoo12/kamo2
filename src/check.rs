@@ -521,7 +521,7 @@ impl Engine<'_> {
         };
         Ok(self.alloc(ty))
     }
-    fn generic_method_type(
+    pub(crate) fn generic_method_type(
         &mut self,
         inductive: crate::syntax::InductiveId,
         constructor_id: crate::syntax::ConstructorId,
@@ -623,7 +623,7 @@ impl Engine<'_> {
         Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
     }
 
-    fn generic_motive_type(
+    pub(crate) fn generic_motive_type(
         &mut self,
         inductive: crate::syntax::InductiveId,
         parameters: &[ValId],
