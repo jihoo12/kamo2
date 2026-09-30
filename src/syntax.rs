@@ -582,5 +582,6 @@ mod inductive_metadata_tests {
         assert_eq!(declaration.constructors[1].result_indices.len(), 1);
         assert_eq!(declaration.constructors[0].id.index(), 0);
         assert_eq!(declaration.constructors[1].id.index(), 1);
+        assert_eq!(program.constructors.len(), 2);
     }
 }
