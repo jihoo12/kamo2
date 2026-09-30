@@ -138,6 +138,11 @@ impl Elaborator {
                     "surface if is reserved until motive synthesis is implemented",
                 ));
             }
+            Expr::Match { .. } => {
+                return Err(Error::plain(
+                    "surface match is reserved until pattern elaboration is implemented",
+                ));
+            }
         };
         Ok(self.core.alloc(term, 0))
     }
@@ -208,6 +213,7 @@ impl Elaborator {
                 "cannot infer an unannotated lambda in a let binding",
             )),
             Expr::If { .. } => Err(Error::plain("cannot infer surface if yet")),
+            Expr::Match { .. } => Err(Error::plain("cannot infer surface match yet")),
         }
     }
 }
