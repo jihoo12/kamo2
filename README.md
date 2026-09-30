@@ -1,6 +1,6 @@
 # Kamo2
 
-forked from kamo
+forked from [kamo](https://github.com/jihoo12/kamo)
 
 An experimental Cartesian cubical proof-assistant kernel in Rust. It uses safe
 indexed arenas and explicit S-expressions. There are no postulates, recursive
