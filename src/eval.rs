@@ -1431,6 +1431,64 @@ mod tests {
     }
 
     #[test]
+    fn generic_inductive_eliminator_reduces_recursive_constructor() {
+        let mut program = Program::default();
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = program.alloc(Term::Inductive(nat), 0);
+        let pred = TelescopeEntry {
+            name: "pred".to_owned(),
+            ty: pred_ty,
+        };
+        let usuc =
+            program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+
+        let mut e = Engine::new(&program, true, 100_000, 100_000);
+        let face = e.faces.top();
+        let nat_result = e.alloc(Val::Nat);
+        let motive_var = e.fresh_term();
+        let motive = e.alloc(Val::Lam(Binder {
+            var: motive_var,
+            body: nat_result,
+        }));
+        let zero_method = e.alloc(Val::Zero);
+
+        let ih_var = e.fresh_term();
+        let ih = e.alloc(Val::Var(ih_var, Some(nat_result)));
+        let suc_ih = e.alloc(Val::Suc(ih));
+        let ih_method = e.alloc(Val::Lam(Binder {
+            var: ih_var,
+            body: suc_ih,
+        }));
+        let pred_var = e.fresh_term();
+        let suc_method = e.alloc(Val::Lam(Binder {
+            var: pred_var,
+            body: ih_method,
+        }));
+
+        let uzero_value = e.alloc(Val::Constructor(uzero));
+        let usuc_value = e.alloc(Val::Constructor(usuc));
+        let one = e.alloc(Val::App(usuc_value, uzero_value));
+        let elim = e.alloc(Val::Elim {
+            inductive: nat,
+            parameters: vec![],
+            motive,
+            methods: vec![zero_method, suc_method],
+            indices: vec![],
+            scrutinee: one,
+        });
+
+        let reduced = e.force(elim, face).unwrap();
+        let reduced = e.force(reduced, face).unwrap();
+        assert!(matches!(e.get(reduced), Val::Suc(_)));
+        let Val::Suc(predecessor) = e.get(reduced) else {
+            unreachable!();
+        };
+        let predecessor = e.force(predecessor, face).unwrap();
+        assert!(matches!(e.get(predecessor), Val::Zero));
+    }
+
+    #[test]
     fn native_singleton_filler_agrees_with_checked_library() {
         let source = format!(
             "{}\n(def test-type (U 0) Nat)\n(def test-equiv (app (app Equiv Nat) Nat) (app id-equiv Nat))",
