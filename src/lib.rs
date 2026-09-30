@@ -8,8 +8,8 @@ mod face;
 mod glue;
 mod hash;
 mod quote;
-mod syntax;
 pub mod surface;
+mod syntax;
 
 use std::fmt;
 use std::time::{Duration, Instant};
