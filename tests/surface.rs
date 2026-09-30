@@ -33,6 +33,7 @@ fn dependent_pi_and_let_elaborate_directly() {
         def id (A : Type) (x : A) : A = x
         def via-let : Bool = let x = true; x
         def via-app-let : Bool = let f = id Bool; f true
+        def local-let (A : Type) (x : A) : A = let y = x; y
     "#;
     assert_eq!(surface_nf(source, "via-let"), "true");
     assert_eq!(surface_nf(source, "via-app-let"), "true");
