@@ -230,10 +230,17 @@ impl Engine<'_> {
                 for parameter in parameters {
                     parameter_terms.push(self.quote_inner(parameter, None, face, n)?);
                 }
-                let motive = self.quote_inner(motive, None, face, n)?;
+                let declaration = self.program.inductives[inductive.index()].clone();
+                let motive_type =
+                    self.generic_motive_type(inductive, &parameters, declaration.universe);
+                let motive_term = self.quote_inner(motive, Some(motive_type), face, n)?;
                 let mut method_terms = Vec::with_capacity(methods.len());
-                for method in methods {
-                    method_terms.push(self.quote_inner(method, None, face, n)?);
+                for (method, constructor) in
+                    methods.into_iter().zip(declaration.constructors.iter().copied())
+                {
+                    let method_type =
+                        self.generic_method_type(inductive, constructor, &parameters, motive, face)?;
+                    method_terms.push(self.quote_inner(method, Some(method_type), face, n)?);
                 }
                 let mut index_terms = Vec::with_capacity(indices.len());
                 for index in indices {
@@ -243,6 +250,7 @@ impl Engine<'_> {
                 format!(
                     "(elim {family} (params {}) {motive} (methods {}) (indices {}) {scrutinee})",
                     parameter_terms.join(" "),
+                    motive_term,
                     method_terms.join(" "),
                     index_terms.join(" "),
                 )
