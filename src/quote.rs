@@ -1,3 +1,4 @@
+use crate::arena::Key;
 use crate::eval::{Engine, Val, ValId};
 use crate::face::{Dim, FaceId};
 use crate::{Error, Result};
@@ -118,6 +119,8 @@ impl Engine<'_> {
             Val::U(l) => format!("(U {l})"),
             Val::Bool => "Bool".into(),
             Val::Nat => "Nat".into(),
+            Val::Inductive(id) => self.program.inductives[id.index()].name.clone(),
+            Val::Constructor(id) => self.program.constructors[id.index()].name.clone(),
             Val::True => "true".into(),
             Val::False => "false".into(),
             Val::Zero => "zero".into(),
