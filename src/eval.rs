@@ -666,6 +666,8 @@ impl<'a> Engine<'a> {
             }
             (Val::Var(x, _), Val::Var(y, _)) => Ok(x == y),
             (Val::U(x), Val::U(y)) => Ok(x == y),
+            (Val::Inductive(x), Val::Inductive(y)) => Ok(x == y),
+            (Val::Constructor(x), Val::Constructor(y)) => Ok(x == y),
             (Val::Bool, Val::Bool)
             | (Val::Nat, Val::Nat)
             | (Val::Zero, Val::Zero)
