@@ -1543,6 +1543,118 @@ mod tests {
     }
 
     #[test]
+    fn indexed_vec_eliminator_reduces_using_tail_index() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat_ty = program.alloc(Term::Nat, 0);
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+        let zero_index = program.alloc(Term::Zero, 0);
+        let nil =
+            program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+
+        let n_arg = TelescopeEntry {
+            name: "n".to_owned(),
+            ty: nat_ty,
+        };
+        let a_var = program.alloc(Term::Var(1), 0);
+        let head_arg = TelescopeEntry {
+            name: "head".to_owned(),
+            ty: a_var,
+        };
+        let vec_head = program.alloc(Term::Inductive(vec), 0);
+        let a_var = program.alloc(Term::Var(2), 0);
+        let vec_a = program.alloc(Term::App(vec_head, a_var), 0);
+        let n_var = program.alloc(Term::Var(1), 0);
+        let vec_a_n = program.alloc(Term::App(vec_a, n_var), 0);
+        let tail_arg = TelescopeEntry {
+            name: "tail".to_owned(),
+            ty: vec_a_n,
+        };
+        let n_result = program.alloc(Term::Var(2), 0);
+        let suc_n = program.alloc(Term::Suc(n_result), 0);
+        let cons = program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![n_arg, head_arg, tail_arg],
+            vec![suc_n],
+            vec![2],
+        );
+
+        let mut e = Engine::new(&program, true, 100_000, 100_000);
+        let face = e.faces.top();
+        let bool_parameter = e.alloc(Val::Bool);
+        let nat_result = e.alloc(Val::Nat);
+
+        // P = λ n. λ xs. Nat
+        let xs_var = e.fresh_term();
+        let motive_xs = e.alloc(Val::Lam(Binder {
+            var: xs_var,
+            body: nat_result,
+        }));
+        let n_var = e.fresh_term();
+        let motive = e.alloc(Val::Lam(Binder {
+            var: n_var,
+            body: motive_xs,
+        }));
+        let nil_method = e.alloc(Val::Zero);
+
+        // cons_case = λ n. λ head. λ tail. λ ih. suc ih
+        let ih_var = e.fresh_term();
+        let ih = e.alloc(Val::Var(ih_var, Some(nat_result)));
+        let suc_ih = e.alloc(Val::Suc(ih));
+        let mut cons_method = e.alloc(Val::Lam(Binder {
+            var: ih_var,
+            body: suc_ih,
+        }));
+        for _ in 0..3 {
+            let var = e.fresh_term();
+            cons_method = e.alloc(Val::Lam(Binder {
+                var,
+                body: cons_method,
+            }));
+        }
+
+        let nil_value = e.alloc(Val::Constructor(nil));
+        let nil_bool = e.alloc(Val::App(nil_value, bool_parameter));
+        let cons_value = e.alloc(Val::Constructor(cons));
+        let cons_bool = e.alloc(Val::App(cons_value, bool_parameter));
+        let zero = e.alloc(Val::Zero);
+        let cons_zero = e.alloc(Val::App(cons_bool, zero));
+        let true_value = e.alloc(Val::True);
+        let cons_true = e.alloc(Val::App(cons_zero, true_value));
+        let singleton = e.alloc(Val::App(cons_true, nil_bool));
+        let one = e.alloc(Val::Suc(zero));
+
+        let elim = e.alloc(Val::Elim {
+            inductive: vec,
+            parameters: vec![bool_parameter],
+            motive,
+            methods: vec![nil_method, cons_method],
+            indices: vec![one],
+            scrutinee: singleton,
+        });
+
+        let reduced = e.force(elim, face).unwrap();
+        let reduced = e.force(reduced, face).unwrap();
+        let Val::Suc(predecessor) = e.get(reduced) else {
+            panic!("Vec.cons eliminator did not reduce to the cons method");
+        };
+        let predecessor = e.force(predecessor, face).unwrap();
+        assert!(matches!(e.get(predecessor), Val::Zero));
+    }
+
+    #[test]
     fn neutral_generic_eliminator_has_type_quotes_and_compares_structurally() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
