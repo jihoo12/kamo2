@@ -388,7 +388,14 @@ impl<'a> Engine<'a> {
                 }
                 Val::Var(x, ty.map(|t| self.sub(t, s)))
             }
-            Val::U(_) | Val::Bool | Val::Nat | Val::True | Val::False | Val::Zero => return v,
+            Val::U(_)
+            | Val::Bool
+            | Val::Nat
+            | Val::Inductive(_)
+            | Val::Constructor(_)
+            | Val::True
+            | Val::False
+            | Val::Zero => return v,
             Val::Pi(a, b) => {
                 let a = self.sub(a, s);
                 let b = self.sub_binder(b, s, false);
