@@ -564,6 +564,8 @@ impl Engine<'_> {
         }
         match (self.get(a), self.get(b)) {
             (Val::U(a), Val::U(b)) => Ok(a == b),
+            (Val::Inductive(a), Val::Inductive(b)) => Ok(a == b),
+            (Val::Constructor(a), Val::Constructor(b)) => Ok(a == b),
             (Val::Bool, Val::Bool)
             | (Val::Nat, Val::Nat)
             | (Val::True, Val::True)
