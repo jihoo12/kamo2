@@ -2,6 +2,8 @@ use crate::arena::{Arena, key};
 use crate::{Error, Result};
 use std::collections::HashMap;
 key!(TermId);
+key!(InductiveId);
+key!(ConstructorId);
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum D {
@@ -64,10 +66,37 @@ pub(crate) struct Decl {
     pub ty: TermId,
     pub body: TermId,
 }
+
+#[derive(Clone, Debug)]
+pub(crate) struct TelescopeEntry {
+    pub name: String,
+    pub ty: TermId,
+}
+
+pub(crate) type Telescope = Vec<TelescopeEntry>;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ConstructorDecl {
+    pub id: ConstructorId,
+    pub name: String,
+    pub arguments: Telescope,
+    pub result_indices: Vec<TermId>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct InductiveDecl {
+    pub id: InductiveId,
+    pub name: String,
+    pub universe: u32,
+    pub parameters: Telescope,
+    pub indices: Telescope,
+    pub constructors: Vec<ConstructorDecl>,
+}
 #[derive(Default, Debug)]
 pub(crate) struct Program {
     pub terms: Arena<TermId, Node>,
     pub decls: Vec<Decl>,
+    pub inductives: Vec<InductiveDecl>,
 }
 
 impl Program {
@@ -77,6 +106,36 @@ impl Program {
 
     pub(crate) fn push_decl(&mut self, name: String, ty: TermId, body: TermId) {
         self.decls.push(Decl { name, ty, body });
+    }
+
+    pub(crate) fn push_inductive(
+        &mut self,
+        name: String,
+        universe: u32,
+        parameters: Telescope,
+        indices: Telescope,
+        constructors: Vec<(String, Telescope, Vec<TermId>)>,
+    ) -> InductiveId {
+        let id = InductiveId::new(self.inductives.len());
+        let constructors = constructors
+            .into_iter()
+            .enumerate()
+            .map(|(index, (name, arguments, result_indices))| ConstructorDecl {
+                id: ConstructorId::new(index),
+                name,
+                arguments,
+                result_indices,
+            })
+            .collect();
+        self.inductives.push(InductiveDecl {
+            id,
+            name,
+            universe,
+            parameters,
+            indices,
+            constructors,
+        });
+        id
     }
 }
 #[derive(Debug)]
