@@ -9,6 +9,7 @@ mod glue;
 mod hash;
 mod quote;
 mod syntax;
+pub mod surface;
 
 use std::fmt;
 use std::time::{Duration, Instant};
