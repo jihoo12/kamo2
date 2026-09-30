@@ -268,7 +268,14 @@ impl<'a> Engine<'a> {
     fn sub_uncached(&mut self, v: ValId, s: SubId) -> ValId {
         if self.optimized {
             match self.get(v) {
-                Val::U(_) | Val::Bool | Val::Nat | Val::Inductive(_) | Val::Constructor(_) | Val::True | Val::False | Val::Zero => return v,
+                Val::U(_)
+                | Val::Bool
+                | Val::Nat
+                | Val::Inductive(_)
+                | Val::Constructor(_)
+                | Val::True
+                | Val::False
+                | Val::Zero => return v,
                 Val::Susp(t, e)
                     if matches!(self.program.terms.get(t).term, Term::Global(_))
                         || (self.envs.get(e).terms.is_empty()
