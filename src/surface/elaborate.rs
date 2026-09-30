@@ -589,6 +589,92 @@ mod pattern_tests {
     use crate::surface::ast::{MatchBranch, Pattern};
     use crate::syntax::TelescopeEntry;
 
+    fn user_nat_core() -> (Program, crate::syntax::InductiveId) {
+        let mut core = Program::default();
+        let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        core.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = core.alloc(Term::Inductive(nat), 0);
+        core.push_constructor(
+            nat,
+            "usuc".to_owned(),
+            vec![TelescopeEntry {
+                name: "pred".to_owned(),
+                ty: pred_ty,
+            }],
+            vec![],
+            vec![0],
+        );
+        (core, nat)
+    }
+
+    fn recursive_nat_function(recursive_argument: &str) -> SurfaceProgram {
+        SurfaceProgram {
+            declarations: vec![Declaration {
+                name: "f".to_owned(),
+                ty: Some(Expr::Pi {
+                    parameter: None,
+                    domain: Box::new(Expr::Name("UserNat".to_owned())),
+                    codomain: Box::new(Expr::Nat),
+                }),
+                value: Expr::Lambda {
+                    parameter: "n".to_owned(),
+                    body: Box::new(Expr::Match {
+                        scrutinee: Box::new(Expr::Name("n".to_owned())),
+                        branches: vec![
+                            MatchBranch {
+                                pattern: Pattern::Constructor {
+                                    name: "uzero".to_owned(),
+                                    arguments: vec![],
+                                },
+                                body: Expr::Zero,
+                            },
+                            MatchBranch {
+                                pattern: Pattern::Constructor {
+                                    name: "usuc".to_owned(),
+                                    arguments: vec![Pattern::Name("pred".to_owned())],
+                                },
+                                body: Expr::Apply {
+                                    function: Box::new(Expr::Name("f".to_owned())),
+                                    argument: Box::new(Expr::Name(recursive_argument.to_owned())),
+                                },
+                            },
+                        ],
+                    }),
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn lowers_structural_recursive_call_to_induction_hypothesis() {
+        let (core, _) = user_nat_core();
+        let program = elaborate_into(core, &recursive_nat_function("pred")).unwrap();
+        let Term::Lam(elim) = program.terms.get(program.decls[0].body).term else {
+            panic!("expected function body");
+        };
+        let Term::Elim { methods, .. } = &program.terms.get(elim).term else {
+            panic!("expected generic eliminator");
+        };
+        let Term::Lam(inner) = program.terms.get(methods[1]).term else {
+            panic!("expected constructor argument binder");
+        };
+        let Term::Lam(body) = program.terms.get(inner).term else {
+            panic!("expected induction hypothesis binder");
+        };
+        assert!(matches!(program.terms.get(body).term, Term::Var(0)));
+    }
+
+    #[test]
+    fn rejects_non_structural_recursive_call() {
+        let (core, _) = user_nat_core();
+        let error = elaborate_into(core, &recursive_nat_function("n")).unwrap_err();
+        assert!(
+            error
+                .message
+                .contains("recursive call is not on a structurally smaller argument")
+        );
+    }
+
     #[test]
     fn resolves_constructor_patterns_from_core_metadata() {
         let mut core = Program::default();
