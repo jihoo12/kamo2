@@ -702,6 +702,141 @@ mod pattern_tests {
     }
 
     #[test]
+    fn lowers_indexed_vec_match_with_parameters_indices_and_tail_ih() {
+        let mut core = Program::default();
+        let type0 = core.alloc(Term::U(0), 0);
+        let nat_ty = core.alloc(Term::Nat, 0);
+        let vec = core.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat_ty,
+            }],
+        );
+        let zero = core.alloc(Term::Zero, 0);
+        core.push_constructor(vec, "nil".to_owned(), vec![], vec![zero], vec![]);
+        let n_ty = core.alloc(Term::Nat, 0);
+        let a_var = core.alloc(Term::Var(1), 0);
+        let vec_head = core.alloc(Term::Inductive(vec), 0);
+        let tail_a = core.alloc(Term::Var(2), 0);
+        let vec_a = core.alloc(Term::App(vec_head, tail_a), 0);
+        let tail_n = core.alloc(Term::Var(1), 0);
+        let vec_a_n = core.alloc(Term::App(vec_a, tail_n), 0);
+        let result_n = core.alloc(Term::Var(2), 0);
+        let suc_n = core.alloc(Term::Suc(result_n), 0);
+        core.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![
+                TelescopeEntry {
+                    name: "n".to_owned(),
+                    ty: n_ty,
+                },
+                TelescopeEntry {
+                    name: "head".to_owned(),
+                    ty: a_var,
+                },
+                TelescopeEntry {
+                    name: "tail".to_owned(),
+                    ty: vec_a_n,
+                },
+            ],
+            vec![suc_n],
+            vec![2],
+        );
+
+        let vec_a = Expr::Apply {
+            function: Box::new(Expr::Name("Vec".to_owned())),
+            argument: Box::new(Expr::Name("A".to_owned())),
+        };
+        let vec_a_n = Expr::Apply {
+            function: Box::new(vec_a),
+            argument: Box::new(Expr::Name("n".to_owned())),
+        };
+        let surface = SurfaceProgram {
+            declarations: vec![Declaration {
+                name: "length".to_owned(),
+                ty: Some(Expr::Pi {
+                    parameter: Some("A".to_owned()),
+                    domain: Box::new(Expr::Universe(0)),
+                    codomain: Box::new(Expr::Pi {
+                        parameter: Some("n".to_owned()),
+                        domain: Box::new(Expr::Nat),
+                        codomain: Box::new(Expr::Pi {
+                            parameter: None,
+                            domain: Box::new(vec_a_n),
+                            codomain: Box::new(Expr::Nat),
+                        }),
+                    }),
+                }),
+                value: Expr::Lambda {
+                    parameter: "A".to_owned(),
+                    body: Box::new(Expr::Lambda {
+                        parameter: "n".to_owned(),
+                        body: Box::new(Expr::Lambda {
+                            parameter: "xs".to_owned(),
+                            body: Box::new(Expr::Match {
+                                scrutinee: Box::new(Expr::Name("xs".to_owned())),
+                                branches: vec![
+                                    MatchBranch {
+                                        pattern: Pattern::Constructor {
+                                            name: "nil".to_owned(),
+                                            arguments: vec![],
+                                        },
+                                        body: Expr::Zero,
+                                    },
+                                    MatchBranch {
+                                        pattern: Pattern::Constructor {
+                                            name: "cons".to_owned(),
+                                            arguments: vec![
+                                                Pattern::Name("m".to_owned()),
+                                                Pattern::Name("head".to_owned()),
+                                                Pattern::Name("tail".to_owned()),
+                                            ],
+                                        },
+                                        body: Expr::Suc(Box::new(Expr::Apply {
+                                            function: Box::new(Expr::Name("length".to_owned())),
+                                            argument: Box::new(Expr::Name("tail".to_owned())),
+                                        })),
+                                    },
+                                ],
+                            }),
+                        }),
+                    }),
+                },
+            }],
+        };
+
+        let program = elaborate_into(core, &surface).unwrap();
+        let mut term = program.decls[0].body;
+        for _ in 0..3 {
+            let Term::Lam(body) = program.terms.get(term).term else {
+                panic!("expected function binder");
+            };
+            term = body;
+        }
+        let Term::Elim {
+            inductive,
+            parameters,
+            indices,
+            methods,
+            ..
+        } = &program.terms.get(term).term
+        else {
+            panic!("expected generic eliminator");
+        };
+        assert_eq!(*inductive, vec);
+        assert_eq!(parameters.len(), 1);
+        assert_eq!(indices.len(), 1);
+        assert_eq!(methods.len(), 2);
+    }
+
+    #[test]
     fn resolves_constructor_patterns_from_core_metadata() {
         let mut core = Program::default();
         let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
