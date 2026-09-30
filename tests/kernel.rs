@@ -33,8 +33,38 @@ fn example_program() {
 #[test]
 fn universe_errors() {
     rejects("(def bad (U 0) (U 0))", "type mismatch");
-    rejects("(def bad (U 1) Bool)", "type mismatch");
     rejects("(def bad (U 4294967295) Bool)", "overflow");
+}
+
+#[test]
+fn cumulative_universe_checking() {
+    CheckedProgram::check(
+        "(def bool-up-one (U 1) Bool)
+         (def bool-up-two (U 2) Bool)
+         (def u0-up-one (U 2) (U 0))",
+    )
+    .unwrap();
+
+    // Cumulativity only goes upward.
+    rejects("(def bad (U 0) (U 0))", "type mismatch");
+}
+
+#[test]
+fn universe_cumulativity_does_not_change_conversion() {
+    rejects(
+        "(def bad (Path i (U 2) (U 0) (U 1)) (path i (U 0)))",
+        "endpoint",
+    );
+}
+
+#[test]
+fn cumulative_universes_preserve_cubical_types() {
+    CheckedProgram::check(
+        "(def path-up (U 1) (Path i Bool true true))
+         (def coe-up (U 1) (coe i (U 0) 0 1 Bool))
+         (def glue-up (U 1) (Glue Bool ()))",
+    )
+    .unwrap();
 }
 
 #[test]
