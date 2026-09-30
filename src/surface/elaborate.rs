@@ -58,6 +58,38 @@ impl Elaborator {
         Ok(constructor)
     }
 
+    fn inductive_application(
+        &self,
+        expr: &Expr,
+    ) -> Result<(crate::syntax::InductiveId, Vec<Expr>, Vec<Expr>)> {
+        let mut head = expr;
+        let mut arguments = Vec::new();
+        while let Expr::Apply { function, argument } = head {
+            arguments.push((**argument).clone());
+            head = function;
+        }
+        arguments.reverse();
+
+        let Expr::Name(name) = head else {
+            return Err(Error::plain("match scrutinee is not an inductive family"));
+        };
+        let inductive = self
+            .resolve_inductive(name)
+            .map_err(|_| Error::plain("match scrutinee is not an inductive family"))?;
+        let declaration = &self.core.inductives[inductive.index()];
+        let expected = declaration.parameters.len() + declaration.indices.len();
+        if arguments.len() != expected {
+            return Err(Error::plain(format!(
+                "inductive family '{}' expects {} arguments, found {}",
+                declaration.name,
+                expected,
+                arguments.len()
+            )));
+        }
+        let indices = arguments.split_off(declaration.parameters.len());
+        Ok((inductive, arguments, indices))
+    }
+
     fn validate_constructor_branches(
         &self,
         branches: &[super::ast::MatchBranch],
@@ -234,8 +266,18 @@ impl Elaborator {
                     "surface if is reserved until motive synthesis is implemented",
                 ));
             }
-            Expr::Match { branches, .. } => {
-                self.validate_constructor_branches(branches)?;
+            Expr::Match {
+                scrutinee,
+                branches,
+            } => {
+                let branch_family = self.validate_constructor_branches(branches)?;
+                let scrutinee_ty = self.infer(scrutinee)?;
+                let (scrutinee_family, _, _) = self.inductive_application(&scrutinee_ty)?;
+                if branch_family != scrutinee_family {
+                    return Err(Error::plain(
+                        "match branches do not belong to the scrutinee inductive family",
+                    ));
+                }
                 return Err(Error::plain(
                     "surface match is reserved until pattern elaboration is implemented",
                 ));
