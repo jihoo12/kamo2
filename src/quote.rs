@@ -217,10 +217,35 @@ impl Engine<'_> {
                 let c = self.quote_inner(c, Some(bool_ty), face, n)?;
                 format!("(bool-elim (lam {name} {motive}) {a} {b} {c})")
             }
-            Val::Elim { .. } => {
-                return Err(Error::plain(
-                    "internal error: generic inductive eliminator quotation is not implemented yet",
-                ));
+            Val::Elim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let family = self.program.inductives[inductive.index()].name.clone();
+                let mut parameter_terms = Vec::with_capacity(parameters.len());
+                for parameter in parameters {
+                    parameter_terms.push(self.quote_inner(parameter, None, face, n)?);
+                }
+                let motive = self.quote_inner(motive, None, face, n)?;
+                let mut method_terms = Vec::with_capacity(methods.len());
+                for method in methods {
+                    method_terms.push(self.quote_inner(method, None, face, n)?);
+                }
+                let mut index_terms = Vec::with_capacity(indices.len());
+                for index in indices {
+                    index_terms.push(self.quote_inner(index, None, face, n)?);
+                }
+                let scrutinee = self.quote_inner(scrutinee, None, face, n)?;
+                format!(
+                    "(elim {family} (params {}) {motive} (methods {}) (indices {}) {scrutinee})",
+                    parameter_terms.join(" "),
+                    method_terms.join(" "),
+                    index_terms.join(" "),
+                )
             }
             Val::NatElim(p, z, s, k) => {
                 let nat = self.alloc(Val::Nat);
