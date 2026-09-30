@@ -40,6 +40,14 @@ pub(crate) enum Term {
     Inductive(InductiveId),
     #[allow(dead_code)]
     Constructor(ConstructorId),
+    #[allow(dead_code)]
+    Elim {
+        inductive: InductiveId,
+        motive: TermId,
+        methods: Vec<TermId>,
+        indices: Vec<TermId>,
+        scrutinee: TermId,
+    },
     Zero,
     Suc(TermId),
     NatElim(TermId, TermId, TermId, TermId),
