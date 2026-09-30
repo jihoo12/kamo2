@@ -1,3 +1,4 @@
+use crate::arena::Key;
 use crate::eval::{Binder, Engine, Env, EnvId, Val, ValId};
 use crate::face::{Dim, FaceId};
 use crate::syntax::{Term, TermId};
