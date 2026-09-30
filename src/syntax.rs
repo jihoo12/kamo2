@@ -497,3 +497,88 @@ pub(crate) fn parse(source: &str) -> Result<Program> {
     }
     Ok(p.program)
 }
+
+
+#[cfg(test)]
+mod inductive_metadata_tests {
+    use super::*;
+
+    fn entry(program: &mut Program, name: &str, term: Term) -> TelescopeEntry {
+        TelescopeEntry {
+            name: name.to_owned(),
+            ty: program.alloc(term, 0),
+        }
+    }
+
+    #[test]
+    fn stores_nat_shaped_inductive_metadata() {
+        let mut program = Program::default();
+        let nat = program.push_inductive(
+            "UserNat".to_owned(),
+            0,
+            vec![],
+            vec![],
+            vec![
+                ("zero".to_owned(), vec![], vec![]),
+                (
+                    "suc".to_owned(),
+                    vec![entry(&mut program, "pred", Term::Nat)],
+                    vec![],
+                ),
+            ],
+        );
+
+        let declaration = &program.inductives[nat.index()];
+        assert_eq!(declaration.id, nat);
+        assert_eq!(declaration.name, "UserNat");
+        assert_eq!(declaration.universe, 0);
+        assert!(declaration.parameters.is_empty());
+        assert!(declaration.indices.is_empty());
+        assert_eq!(declaration.constructors.len(), 2);
+        assert_eq!(declaration.constructors[0].name, "zero");
+        assert_eq!(declaration.constructors[1].name, "suc");
+        assert_eq!(declaration.constructors[1].arguments.len(), 1);
+    }
+
+    #[test]
+    fn stores_vec_shaped_parameters_indices_and_constructor_results() {
+        let mut program = Program::default();
+        let type0 = program.alloc(Term::U(0), 0);
+        let nat = program.alloc(Term::Nat, 0);
+        let zero = program.alloc(Term::Zero, 0);
+        let n = program.alloc(Term::Var(0), 0);
+        let suc_n = program.alloc(Term::Suc(n), 0);
+
+        let vec = program.push_inductive(
+            "Vec".to_owned(),
+            0,
+            vec![TelescopeEntry {
+                name: "A".to_owned(),
+                ty: type0,
+            }],
+            vec![TelescopeEntry {
+                name: "length".to_owned(),
+                ty: nat,
+            }],
+            vec![
+                ("nil".to_owned(), vec![], vec![zero]),
+                (
+                    "cons".to_owned(),
+                    vec![TelescopeEntry {
+                        name: "n".to_owned(),
+                        ty: nat,
+                    }],
+                    vec![suc_n],
+                ),
+            ],
+        );
+
+        let declaration = &program.inductives[vec.index()];
+        assert_eq!(declaration.parameters.len(), 1);
+        assert_eq!(declaration.indices.len(), 1);
+        assert_eq!(declaration.constructors[0].result_indices.len(), 1);
+        assert_eq!(declaration.constructors[1].result_indices.len(), 1);
+        assert_eq!(declaration.constructors[0].id.index(), 0);
+        assert_eq!(declaration.constructors[1].id.index(), 1);
+    }
+}
