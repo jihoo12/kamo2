@@ -36,7 +36,9 @@ pub(crate) enum Term {
     False,
     If(TermId, TermId, TermId, TermId),
     Nat,
+    #[allow(dead_code)]
     Inductive(InductiveId),
+    #[allow(dead_code)]
     Constructor(ConstructorId),
     Zero,
     Suc(TermId),
@@ -117,6 +119,7 @@ impl Program {
         self.decls.push(Decl { name, ty, body });
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_inductive(
         &mut self,
         name: String,
@@ -136,6 +139,7 @@ impl Program {
         id
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_constructor(
         &mut self,
         inductive: InductiveId,
