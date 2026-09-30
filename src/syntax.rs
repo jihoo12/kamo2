@@ -1,4 +1,4 @@
-use crate::arena::{Arena, key};
+use crate::arena::{Arena, Key, key};
 use crate::{Error, Result};
 use std::collections::HashMap;
 key!(TermId);
