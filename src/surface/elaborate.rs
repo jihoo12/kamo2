@@ -24,7 +24,7 @@ struct Elaborator {
     global_types: HashMap<String, Expr>,
     locals: Vec<(String, Expr)>,
     current_definition: Option<String>,
-    recursive_calls: HashMap<String, String>,
+    recursive_calls: HashMap<String, (String, Vec<Expr>)>,
 }
 
 impl Elaborator {
@@ -234,12 +234,21 @@ impl Elaborator {
                     ));
                 };
                 let ty = self.surface_type(entry.ty)?;
-                self.locals.push((name.clone(), ty));
+                self.locals.push((name.clone(), ty.clone()));
                 pushed += 1;
                 if constructor.recursive_arguments.contains(&argument_index) {
+                    let (recursive_family, mut recursive_parameters, recursive_indices) =
+                        self.inductive_application(&ty)?;
+                    if recursive_family != inductive {
+                        return Err(Error::plain(
+                            "recursive constructor argument belongs to the wrong family",
+                        ));
+                    }
+                    recursive_parameters.extend(recursive_indices);
                     let ih = format!("<ih:{}>", name);
                     self.locals.push((ih.clone(), expected.clone()));
-                    self.recursive_calls.insert(name.clone(), ih);
+                    self.recursive_calls
+                        .insert(name.clone(), (ih, recursive_parameters));
                     pushed += 1;
                 }
             }
@@ -353,9 +362,24 @@ impl Elaborator {
                             "recursive calls must target a structural argument",
                         ));
                     };
-                    let ih = self.recursive_calls.get(argument_name).ok_or_else(|| {
-                        Error::plain("recursive call is not on a structurally smaller argument")
-                    })?;
+                    let (ih, expected_prefix) =
+                        self.recursive_calls.get(argument_name).ok_or_else(|| {
+                            Error::plain(
+                                "recursive call is not on a structurally smaller argument",
+                            )
+                        })?;
+                    let actual_prefix =
+                        &recursive_arguments[..recursive_arguments.len().saturating_sub(1)];
+                    if actual_prefix.len() != expected_prefix.len()
+                        || actual_prefix
+                            .iter()
+                            .zip(expected_prefix)
+                            .any(|(actual, expected)| *actual != expected)
+                    {
+                        return Err(Error::plain(
+                            "recursive call parameters or indices do not match the recursive argument",
+                        ));
+                    }
                     let index = self
                         .locals
                         .iter()
