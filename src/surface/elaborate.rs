@@ -225,7 +225,9 @@ impl Elaborator {
             };
 
             let mut pushed = 0;
-            for (argument, entry) in arguments.iter().zip(&constructor.arguments) {
+            for (argument_index, (argument, entry)) in
+                arguments.iter().zip(&constructor.arguments).enumerate()
+            {
                 let Pattern::Name(name) = argument else {
                     return Err(Error::plain(
                         "nested constructor patterns are not supported yet",
@@ -234,7 +236,7 @@ impl Elaborator {
                 let ty = self.surface_type(entry.ty)?;
                 self.locals.push((name.clone(), ty));
                 pushed += 1;
-                if constructor.recursive_arguments.contains(&(pushed - 1)) {
+                if constructor.recursive_arguments.contains(&argument_index) {
                     let ih = format!("<ih:{}>", name);
                     self.locals.push((ih.clone(), expected.clone()));
                     self.recursive_calls.insert(name.clone(), ih);
