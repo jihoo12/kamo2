@@ -1,4 +1,5 @@
 use super::ast::{Declaration, Expr, Pattern, Program as SurfaceProgram};
+use crate::arena::Key;
 use crate::syntax::{ConstructorId, Program, Term, TermId};
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
@@ -49,9 +50,7 @@ impl Elaborator {
         let mut seen = HashSet::new();
         for branch in branches {
             let Pattern::Constructor { name, arguments } = &branch.pattern else {
-                return Err(Error::plain(
-                    "match branches must use constructor patterns",
-                ));
+                return Err(Error::plain("match branches must use constructor patterns"));
             };
             let constructor_id = self.resolve_constructor(name)?;
             let constructor = &self.core.constructors[constructor_id.index()];
