@@ -1115,7 +1115,7 @@ impl<'a> Engine<'a> {
         (value, arguments)
     }
 
-    fn inductive_application(
+    pub(crate) fn inductive_application(
         &mut self,
         value: ValId,
         face: FaceId,
