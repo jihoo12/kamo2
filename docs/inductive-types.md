@@ -194,16 +194,20 @@ Positivity is a trusted check, not a parser restriction.
 
 ## Universe levels
 
-Kamo currently uses explicit, non-cumulative universes. Inductive declarations
-must respect that choice initially rather than silently introducing cumulative
-behavior.
+Kamo2 uses explicit cumulative universes as specified in
+[`universes.md`](universes.md). Inductive declarations must use the same
+compatibility judgment rather than inventing a separate lifting mechanism.
 
-A declaration records its resulting universe level. Constructor argument types
-must be valid at levels permitted by the formation rule.
+A declaration records its principal resulting universe level. Constructor
+argument types must be valid at levels permitted by the formation rule, and a
+type known at `U i` may be checked at `U j` when `i <= j`. This does not
+make different universe levels definitionally equal and does not insert a
+runtime `Lift` term.
 
-The precise large-elimination policy must be decided before implementation.
-For the first milestone, we should prefer a simple explicit rule over implicit
-universe maximization.
+The precise large-elimination policy remains a separate decision and must be
+settled before dependent elimination is implemented. Universe polymorphism and
+level inference are also later elaborator features; the first inductive
+implementation may use explicit concrete levels.
 
 ## Dependent elimination
 
@@ -441,7 +445,12 @@ higher inductive families
 Proceed with **checked inductive metadata in the core**, while keeping existing
 primitive `Nat` and `Bool` unchanged.
 
-The first code PR should implement only Slice A:
+Before Slice A, implement the cumulative-universe checking rules described in
+[`universes.md`](universes.md). This prevents the inductive representation
+from being designed around Kamo's old non-cumulative checking behavior.
+
+After that universe change, the first inductive code PR should implement only
+Slice A:
 
 - `InductiveId` and `ConstructorId`;
 - internal telescope/inductive/constructor metadata;
