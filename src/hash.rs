@@ -14,11 +14,11 @@ impl Hasher for IdHasher {
         self.0
     }
     fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for chunk in &mut chunks {
-            self.write_u64(u64::from_ne_bytes(chunk.try_into().unwrap()));
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        for chunk in chunks {
+            self.write_u64(u64::from_ne_bytes(*chunk));
         }
-        for byte in chunks.remainder() {
+        for byte in remainder {
             self.write_u8(*byte);
         }
     }
