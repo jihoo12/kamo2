@@ -1120,13 +1120,21 @@ impl<'a> Engine<'a> {
         value: ValId,
         face: FaceId,
     ) -> Result<Option<(InductiveId, Vec<ValId>)>> {
-        let value = self.force(value, face)?;
-        let (head, arguments) = self.application_spine(value);
-        let head = self.force(head, face)?;
-        Ok(match self.get(head) {
-            Val::Inductive(inductive) => Some((inductive, arguments)),
-            _ => None,
-        })
+        let mut value = self.force(value, face)?;
+        let mut arguments = vec![];
+        loop {
+            match self.get(value) {
+                Val::App(function, argument) => {
+                    arguments.push(argument);
+                    value = self.force(function, face)?;
+                }
+                Val::Inductive(inductive) => {
+                    arguments.reverse();
+                    return Ok(Some((inductive, arguments)));
+                }
+                _ => return Ok(None),
+            }
+        }
     }
 
     pub fn neutral_type(&mut self, v: ValId, face: FaceId) -> Result<ValId> {
