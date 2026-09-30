@@ -903,7 +903,9 @@ mod pattern_tests {
         elaborator.locals.push(("A".to_owned(), Expr::Universe(0)));
         elaborator.locals.push(("n".to_owned(), Expr::Nat));
         elaborator.locals.push(("m".to_owned(), Expr::Nat));
-        elaborator.locals.push(("tail".to_owned(), Expr::Name("VecTail".to_owned())));
+        elaborator
+            .locals
+            .push(("tail".to_owned(), Expr::Name("VecTail".to_owned())));
         elaborator.locals.push(("<ih:tail>".to_owned(), Expr::Nat));
         elaborator.recursive_calls.insert(
             "tail".to_owned(),
