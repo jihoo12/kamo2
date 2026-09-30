@@ -457,6 +457,8 @@ impl Elaborator {
                     globals: self.globals.clone(),
                     global_types: self.global_types.clone(),
                     locals,
+                    current_definition: self.current_definition.clone(),
+                    recursive_calls: self.recursive_calls.clone(),
                 };
                 nested.infer(body)
             }
@@ -476,6 +478,8 @@ impl Elaborator {
                     globals: self.globals.clone(),
                     global_types: self.global_types.clone(),
                     locals,
+                    current_definition: self.current_definition.clone(),
+                    recursive_calls: self.recursive_calls.clone(),
                 };
                 let codomain_level = universe_level(&nested.infer(codomain)?)?;
                 Ok(Expr::Universe(domain_level.max(codomain_level)))
