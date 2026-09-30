@@ -248,7 +248,7 @@ impl Engine<'_> {
                 }
                 let scrutinee = self.quote_inner(scrutinee, None, face, n)?;
                 format!(
-                    "(elim {family} (params {}) {motive} (methods {}) (indices {}) {scrutinee})",
+                    "(elim {family} (params {}) {motive_term} (methods {}) (indices {}) {scrutinee})",
                     parameter_terms.join(" "),
                     motive_term,
                     method_terms.join(" "),
