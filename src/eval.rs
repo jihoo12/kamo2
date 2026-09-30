@@ -733,6 +733,48 @@ impl<'a> Engine<'a> {
             (Val::Fst(x), Val::Fst(y))
             | (Val::Snd(x), Val::Snd(y))
             | (Val::Suc(x), Val::Suc(y)) => self.same(x, y, face, depth),
+            (
+                Val::Elim {
+                    inductive: i,
+                    parameters: ps,
+                    motive: p,
+                    methods: ms,
+                    indices: is,
+                    scrutinee: x,
+                },
+                Val::Elim {
+                    inductive: j,
+                    parameters: qs,
+                    motive: q,
+                    methods: ns,
+                    indices: js,
+                    scrutinee: y,
+                },
+            ) => {
+                if i != j || ps.len() != qs.len() || ms.len() != ns.len() || is.len() != js.len() {
+                    return Ok(false);
+                }
+                for (a, b) in ps.into_iter().zip(qs) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                if !self.same(p, q, face, depth)? {
+                    return Ok(false);
+                }
+                for (a, b) in ms.into_iter().zip(ns) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                for (a, b) in is.into_iter().zip(js) {
+                    if !self.same(a, b, face, depth)? {
+                        return Ok(false);
+                    }
+                }
+                self.same(x, y, face, depth)
+            }
+
             (Val::PApp(p, i), Val::PApp(q, j)) => {
                 Ok(self.faces.equal(face, i, j)? && self.same(p, q, face, depth)?)
             }
