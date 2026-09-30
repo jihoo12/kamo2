@@ -67,6 +67,7 @@ pub(crate) struct Decl {
     pub body: TermId,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct TelescopeEntry {
     pub name: String,
@@ -75,6 +76,7 @@ pub(crate) struct TelescopeEntry {
 
 pub(crate) type Telescope = Vec<TelescopeEntry>;
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct ConstructorDecl {
     pub id: ConstructorId,
@@ -83,6 +85,7 @@ pub(crate) struct ConstructorDecl {
     pub result_indices: Vec<TermId>,
 }
 
+#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct InductiveDecl {
     pub id: InductiveId,
@@ -96,7 +99,9 @@ pub(crate) struct InductiveDecl {
 pub(crate) struct Program {
     pub terms: Arena<TermId, Node>,
     pub decls: Vec<Decl>,
+    #[allow(dead_code)]
     pub inductives: Vec<InductiveDecl>,
+    #[allow(dead_code)]
     pub constructors: Vec<ConstructorDecl>,
 }
 
@@ -109,6 +114,7 @@ impl Program {
         self.decls.push(Decl { name, ty, body });
     }
 
+    #[allow(dead_code)]
     pub(crate) fn push_inductive(
         &mut self,
         name: String,
@@ -514,6 +520,7 @@ mod inductive_metadata_tests {
     #[test]
     fn stores_nat_shaped_inductive_metadata() {
         let mut program = Program::default();
+        let pred = entry(&mut program, "pred", Term::Nat);
         let nat = program.push_inductive(
             "UserNat".to_owned(),
             0,
@@ -521,11 +528,7 @@ mod inductive_metadata_tests {
             vec![],
             vec![
                 ("zero".to_owned(), vec![], vec![]),
-                (
-                    "suc".to_owned(),
-                    vec![entry(&mut program, "pred", Term::Nat)],
-                    vec![],
-                ),
+                ("suc".to_owned(), vec![pred], vec![]),
             ],
         );
 
