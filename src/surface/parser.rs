@@ -233,17 +233,17 @@ impl Parser {
     fn atom(&mut self) -> Result<Expr> {
         if self.eat(&TokenKind::LParen) {
             let save = self.index;
-            if let Ok(parameter) = self.name() {
-                if self.eat(&TokenKind::Colon) {
-                    let domain = self.expr()?;
-                    self.expect(TokenKind::RParen, "expected ')' after dependent parameter")?;
-                    self.expect(TokenKind::Arrow, "expected '->' after dependent parameter")?;
-                    return Ok(Expr::Pi {
-                        parameter: Some(parameter),
-                        domain: Box::new(domain),
-                        codomain: Box::new(self.expr()?),
-                    });
-                }
+            if let Ok(parameter) = self.name()
+                && self.eat(&TokenKind::Colon)
+            {
+                let domain = self.expr()?;
+                self.expect(TokenKind::RParen, "expected ')' after dependent parameter")?;
+                self.expect(TokenKind::Arrow, "expected '->' after dependent parameter")?;
+                return Ok(Expr::Pi {
+                    parameter: Some(parameter),
+                    domain: Box::new(domain),
+                    codomain: Box::new(self.expr()?),
+                });
             }
             self.index = save;
             let expr = self.expr()?;
