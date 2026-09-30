@@ -389,7 +389,20 @@ mod pattern_tests {
 
     #[test]
     fn surface_match_remains_reserved_before_lowering() {
-        let core = Program::default();
+        let mut core = Program::default();
+        let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        core.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        let pred_ty = core.alloc(Term::Inductive(nat), 0);
+        core.push_constructor(
+            nat,
+            "usuc".to_owned(),
+            vec![TelescopeEntry {
+                name: "pred".to_owned(),
+                ty: pred_ty,
+            }],
+            vec![],
+            vec![0],
+        );
         let surface = SurfaceProgram {
             declarations: vec![Declaration {
                 name: "f".to_owned(),
@@ -402,10 +415,22 @@ mod pattern_tests {
                     parameter: "n".to_owned(),
                     body: Box::new(Expr::Match {
                         scrutinee: Box::new(Expr::Name("n".to_owned())),
-                        branches: vec![MatchBranch {
-                            pattern: Pattern::Name("zero".to_owned()),
-                            body: Expr::Zero,
-                        }],
+                        branches: vec![
+                            MatchBranch {
+                                pattern: Pattern::Constructor {
+                                    name: "uzero".to_owned(),
+                                    arguments: vec![],
+                                },
+                                body: Expr::Zero,
+                            },
+                            MatchBranch {
+                                pattern: Pattern::Constructor {
+                                    name: "usuc".to_owned(),
+                                    arguments: vec![Pattern::Name("pred".to_owned())],
+                                },
+                                body: Expr::Zero,
+                            },
+                        ],
                     }),
                 },
             }],
