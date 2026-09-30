@@ -446,10 +446,19 @@ impl<'a> Engine<'a> {
                 scrutinee,
             } => Val::Elim {
                 inductive,
-                parameters: parameters.into_iter().map(|parameter| self.sub(parameter, s)).collect(),
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.sub(parameter, s))
+                    .collect(),
                 motive: self.sub(motive, s),
-                methods: methods.into_iter().map(|method| self.sub(method, s)).collect(),
-                indices: indices.into_iter().map(|index| self.sub(index, s)).collect(),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.sub(method, s))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.sub(index, s))
+                    .collect(),
                 scrutinee: self.sub(scrutinee, s),
             },
             Val::PApp(p, d) => Val::PApp(self.sub(p, s), self.sub_dim(s, d)),
@@ -540,10 +549,19 @@ impl<'a> Engine<'a> {
                 scrutinee,
             } => Val::Elim {
                 inductive,
-                parameters: parameters.into_iter().map(|parameter| self.thunk(parameter, e)).collect(),
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.thunk(parameter, e))
+                    .collect(),
                 motive: self.thunk(motive, e),
-                methods: methods.into_iter().map(|method| self.thunk(method, e)).collect(),
-                indices: indices.into_iter().map(|index| self.thunk(index, e)).collect(),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.thunk(method, e))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.thunk(index, e))
+                    .collect(),
                 scrutinee: self.thunk(scrutinee, e),
             },
             Term::Zero => Val::Zero,
@@ -1560,8 +1578,7 @@ mod tests {
             }],
         );
         let zero_index = program.alloc(Term::Zero, 0);
-        let nil =
-            program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
+        let nil = program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero_index], vec![]);
 
         let n_arg = TelescopeEntry {
             name: "n".to_owned(),
