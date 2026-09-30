@@ -895,6 +895,58 @@ mod pattern_tests {
     }
 
     #[test]
+    fn rejects_structural_recursion_with_wrong_prefix() {
+        let mut elaborator = Elaborator {
+            current_definition: Some("length".to_owned()),
+            ..Elaborator::default()
+        };
+        elaborator.locals.push(("A".to_owned(), Expr::Universe(0)));
+        elaborator.locals.push(("n".to_owned(), Expr::Nat));
+        elaborator.locals.push(("m".to_owned(), Expr::Nat));
+        elaborator.locals.push(("tail".to_owned(), Expr::Name("VecTail".to_owned())));
+        elaborator.locals.push(("<ih:tail>".to_owned(), Expr::Nat));
+        elaborator.recursive_calls.insert(
+            "tail".to_owned(),
+            (
+                "<ih:tail>".to_owned(),
+                vec![Expr::Name("A".to_owned()), Expr::Name("m".to_owned())],
+            ),
+        );
+
+        let call = |parameter: Expr, index: Expr| Expr::Apply {
+            function: Box::new(Expr::Apply {
+                function: Box::new(Expr::Apply {
+                    function: Box::new(Expr::Name("length".to_owned())),
+                    argument: Box::new(parameter),
+                }),
+                argument: Box::new(index),
+            }),
+            argument: Box::new(Expr::Name("tail".to_owned())),
+        };
+
+        let wrong_parameter = elaborator
+            .term(&call(Expr::Bool, Expr::Name("m".to_owned())))
+            .unwrap_err();
+        assert!(
+            wrong_parameter
+                .message
+                .contains("parameters or indices do not match")
+        );
+
+        let wrong_index = elaborator
+            .term(&call(
+                Expr::Name("A".to_owned()),
+                Expr::Name("n".to_owned()),
+            ))
+            .unwrap_err();
+        assert!(
+            wrong_index
+                .message
+                .contains("parameters or indices do not match")
+        );
+    }
+
+    #[test]
     fn resolves_constructor_patterns_from_core_metadata() {
         let mut core = Program::default();
         let nat = core.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
