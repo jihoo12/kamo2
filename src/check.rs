@@ -544,7 +544,6 @@ impl Engine<'_> {
                 family = self.app(family, *value);
             }
             let scrutinee = self.fresh_term();
-            let scrutinee_value = self.alloc(Val::Var(scrutinee, Some(family)));
             let codomain = self.alloc(Val::U(universe));
             return self.alloc(Val::Pi(
                 family,
