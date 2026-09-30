@@ -50,7 +50,12 @@ impl Elaborator {
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
             Expr::Name(name) => {
-                if let Some(index) = self.locals.iter().rev().position(|(local, _)| local == name) {
+                if let Some(index) = self
+                    .locals
+                    .iter()
+                    .rev()
+                    .position(|(local, _)| local == name)
+                {
                     Term::Var(index)
                 } else if let Some(index) = self.globals.get(name) {
                     Term::Global(*index)
@@ -163,7 +168,9 @@ impl Elaborator {
                     Some(parameter) => substitute(&codomain, &parameter, argument),
                     None => *codomain,
                 }),
-                _ => Err(Error::plain("cannot apply a non-function surface expression")),
+                _ => Err(Error::plain(
+                    "cannot apply a non-function surface expression",
+                )),
             },
             Expr::Let { name, value, body } => {
                 let value_ty = self.infer(value)?;
