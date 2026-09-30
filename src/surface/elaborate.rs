@@ -26,6 +26,22 @@ struct Elaborator {
 }
 
 impl Elaborator {
+    fn resolve_inductive(&self, name: &str) -> Result<crate::syntax::InductiveId> {
+        let mut matches = self
+            .core
+            .inductives
+            .iter()
+            .filter(|inductive| inductive.name == name)
+            .map(|inductive| inductive.id);
+        let Some(inductive) = matches.next() else {
+            return Err(Error::plain(format!("unknown inductive '{name}'")));
+        };
+        if matches.next().is_some() {
+            return Err(Error::plain(format!("ambiguous inductive '{name}'")));
+        }
+        Ok(inductive)
+    }
+
     fn resolve_constructor(&self, name: &str) -> Result<ConstructorId> {
         let mut matches = self
             .core
@@ -135,6 +151,10 @@ impl Elaborator {
                     Term::Var(index)
                 } else if let Some(index) = self.globals.get(name) {
                     Term::Global(*index)
+                } else if let Ok(inductive) = self.resolve_inductive(name) {
+                    Term::Inductive(inductive)
+                } else if let Ok(constructor) = self.resolve_constructor(name) {
+                    Term::Constructor(constructor)
                 } else {
                     return Err(Error::plain(format!("unknown name '{name}'")));
                 }
@@ -224,6 +244,52 @@ impl Elaborator {
         Ok(self.core.alloc(term, 0))
     }
 
+    fn infer_metadata_name(&self, name: &str) -> Result<Expr> {
+        if let Ok(inductive) = self.resolve_inductive(name) {
+            let declaration = &self.core.inductives[inductive.index()];
+            let mut result = Expr::Universe(declaration.universe);
+            for entry in declaration
+                .indices
+                .iter()
+                .rev()
+                .chain(declaration.parameters.iter().rev())
+            {
+                result = Expr::Pi {
+                    parameter: Some(entry.name.clone()),
+                    domain: Box::new(self.surface_type(entry.ty)?),
+                    codomain: Box::new(result),
+                };
+            }
+            return Ok(result);
+        }
+        Err(Error::plain(format!("cannot infer type of '{name}'")))
+    }
+
+    fn surface_type(&self, term: TermId) -> Result<Expr> {
+        match self.core.terms.get(term).term.clone() {
+            Term::U(level) => Ok(Expr::Universe(level)),
+            Term::Bool => Ok(Expr::Bool),
+            Term::Nat => Ok(Expr::Nat),
+            Term::Inductive(inductive) => {
+                Ok(Expr::Name(self.core.inductives[inductive.index()].name.clone()))
+            }
+            Term::App(function, argument) => Ok(Expr::Apply {
+                function: Box::new(self.surface_type(function)?),
+                argument: Box::new(self.surface_type(argument)?),
+            }),
+            Term::Var(index) => self
+                .locals
+                .iter()
+                .rev()
+                .nth(index)
+                .map(|(name, _)| Expr::Name(name.clone()))
+                .ok_or_else(|| Error::plain("inductive metadata contains an escaped variable")),
+            _ => Err(Error::plain(
+                "inductive metadata type is not representable in surface syntax",
+            )),
+        }
+    }
+
     fn infer(&self, expr: &Expr) -> Result<Expr> {
         match expr {
             Expr::Name(name) => self
@@ -233,7 +299,8 @@ impl Elaborator {
                 .find(|(local, _)| local == name)
                 .map(|(_, ty)| ty.clone())
                 .or_else(|| self.global_types.get(name).cloned())
-                .ok_or_else(|| Error::plain(format!("cannot infer type of '{name}'"))),
+                .map(Ok)
+                .unwrap_or_else(|| self.infer_metadata_name(name)),
             Expr::Universe(level) => level
                 .checked_add(1)
                 .map(Expr::Universe)
