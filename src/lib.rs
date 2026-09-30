@@ -8,6 +8,7 @@ mod face;
 mod glue;
 mod hash;
 mod quote;
+pub mod surface;
 mod syntax;
 
 use std::fmt;
