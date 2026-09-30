@@ -1,4 +1,4 @@
-use super::ast::{Declaration, Expr, Program};
+use super::ast::{Declaration, Expr, MatchBranch, Pattern, Program};
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6,6 +6,8 @@ enum TokenKind {
     Name(String),
     LParen,
     RParen,
+    LBrace,
+    RBrace,
     Colon,
     Eq,
     Arrow,
@@ -39,6 +41,8 @@ fn lex(source: &str) -> Result<Vec<Token>> {
         let (kind, width) = match bytes[i] {
             b'(' => (TokenKind::LParen, 1),
             b')' => (TokenKind::RParen, 1),
+            b'{' => (TokenKind::LBrace, 1),
+            b'}' => (TokenKind::RBrace, 1),
             b':' => (TokenKind::Colon, 1),
             b'\\' => (TokenKind::Backslash, 1),
             b';' => (TokenKind::Semicolon, 1),
@@ -49,7 +53,7 @@ fn lex(source: &str) -> Result<Vec<Token>> {
                 let start = i;
                 while i < bytes.len()
                     && !bytes[i].is_ascii_whitespace()
-                    && !b"():=\\;".contains(&bytes[i])
+                    && !b"(){}:=\\;".contains(&bytes[i])
                     && !(bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
                 {
                     i += 1;
@@ -181,6 +185,26 @@ impl Parser {
                 body: Box::new(self.expr()?),
             });
         }
+        if self.peek_name("match") {
+            self.index += 1;
+            let scrutinee = self.arrow()?;
+            self.expect(TokenKind::LBrace, "expected '{' after match scrutinee")?;
+            let mut branches = Vec::new();
+            while !self.eat(&TokenKind::RBrace) {
+                let pattern = self.pattern()?;
+                self.expect(TokenKind::FatArrow, "expected '=>' after match pattern")?;
+                let body = self.expr()?;
+                branches.push(MatchBranch { pattern, body });
+                if self.eat(&TokenKind::RBrace) {
+                    break;
+                }
+                self.expect(TokenKind::Semicolon, "expected ';' between match branches")?;
+            }
+            return Ok(Expr::Match {
+                scrutinee: Box::new(scrutinee),
+                branches,
+            });
+        }
         if self.peek_name("let") {
             self.index += 1;
             let name = self.name()?;
@@ -195,6 +219,22 @@ impl Parser {
             });
         }
         self.arrow()
+    }
+
+    fn pattern(&mut self) -> Result<Pattern> {
+        let name = self.name()?;
+        let mut arguments = Vec::new();
+        while matches!(
+            self.tokens.get(self.index).map(|token| &token.kind),
+            Some(TokenKind::Name(_))
+        ) {
+            arguments.push(Pattern::Name(self.name()?));
+        }
+        if arguments.is_empty() {
+            Ok(Pattern::Name(name))
+        } else {
+            Ok(Pattern::Constructor { name, arguments })
+        }
     }
 
     fn arrow(&mut self) -> Result<Expr> {
