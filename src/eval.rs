@@ -932,7 +932,7 @@ impl<'a> Engine<'a> {
                     let (head, spine) = self.application_spine(scrutinee);
                     let head = self.force(head, face)?;
                     let Val::Constructor(constructor_id) = self.get(head) else {
-                        continue;
+                        break;
                     };
                     let constructor = self.program.constructors[constructor_id.index()].clone();
                     if constructor.inductive != inductive {
@@ -1488,7 +1488,7 @@ mod tests {
     fn generic_inductive_eliminator_reduces_recursive_constructor() {
         let mut program = Program::default();
         let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
-        let uzero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+        program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
         let pred_ty = program.alloc(Term::Inductive(nat), 0);
         let pred = TelescopeEntry {
             name: "pred".to_owned(),
@@ -1552,8 +1552,7 @@ mod tests {
             name: "pred".to_owned(),
             ty: pred_ty,
         };
-        let usuc =
-            program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
+        program.push_constructor(nat, "usuc".to_owned(), vec![pred], vec![], vec![0]);
 
         let mut e = Engine::new(&program, true, 100_000, 100_000);
         let face = e.faces.top();
