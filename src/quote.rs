@@ -227,7 +227,7 @@ impl Engine<'_> {
             } => {
                 let family = self.program.inductives[inductive.index()].name.clone();
                 let mut parameter_terms = Vec::with_capacity(parameters.len());
-                for parameter in parameters {
+                for parameter in parameters.iter().copied() {
                     parameter_terms.push(self.quote_inner(parameter, None, face, n)?);
                 }
                 let declaration = self.program.inductives[inductive.index()].clone();
@@ -250,7 +250,6 @@ impl Engine<'_> {
                 format!(
                     "(elim {family} (params {}) {motive_term} (methods {}) (indices {}) {scrutinee})",
                     parameter_terms.join(" "),
-                    motive_term,
                     method_terms.join(" "),
                     index_terms.join(" "),
                 )
