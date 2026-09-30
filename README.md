@@ -8,9 +8,12 @@ cubical kernel is the starting point. Kamo2 keeps that cubical foundation while
 developing a functional surface language, user-defined inductive families, and
 eventually higher inductive types.
 
-> Kamo2 is experimental. The current implementation is still close to the Kamo
-> kernel; most of the functional surface language and general inductive/HIT
-> design described below is roadmap work, not implemented language syntax yet.
+> Kamo2 is experimental. The command-line tool still uses the explicit
+> S-expression core language. A minimal functional surface parser and elaborator
+> are available through the library API, including typed definitions, functions,
+> `let` expressions, exhaustive constructor matching, and structural recursion.
+> Surface `data` declarations, dependent pattern matching, cubical surface
+> syntax, and higher inductive types remain roadmap work.
 
 ## Direction
 
@@ -49,7 +52,7 @@ See [language direction](docs/language-design.md),
 [inductive-family design](docs/inductive-types.md), and
 [universe design](docs/universes.md).
 
-## Planned surface language
+## Surface language direction
 
 The surface language is intended to grow toward code like:
 
@@ -76,13 +79,16 @@ def cong (f : A -> B) (p : x == y) : f x == f y =
   path i => f (p @ i)
 ```
 
-These examples describe the target surface language. They are not all accepted
-by the current parser.
+The current parser accepts typed `def` declarations, parameters, function
+types, lambdas, application, `let` expressions, and the primitive `Bool` and
+`Nat` names. The `Vec` declaration and cubical path examples above still
+describe target syntax: the surface parser does not yet accept `data`
+declarations or cubical path syntax.
 
 ## Current implementation
 
-The current executable still exposes Kamo's explicit S-expression core
-language. It includes:
+The command-line executable still exposes Kamo's explicit S-expression core
+language. The core includes:
 
 - dependent functions (`Pi`) and pairs (`Sigma`);
 - explicit universes;
@@ -90,16 +96,33 @@ language. It includes:
 - dependent paths and interval application;
 - coercion and heterogeneous composition;
 - systems and `Glue`;
+- checked metadata and semantics for indexed inductive families and
+  constructors;
+- dependent inductive eliminators with iota computation;
 - normalization-by-evaluation style semantic checking/evaluation machinery;
 - resource limits and reference/optimized evaluator modes.
 
-There are currently no unrestricted recursive definitions, general
-user-defined inductive families, higher inductive types, or completed
-ML-style pattern matching.
+The library API also exposes `CheckedProgram::check_surface` and
+`check_surface_with`. The surface parser/elaborator currently supports:
 
-The repository already contains an initial `surface` module, but the existing
-S-expression parser remains the usable frontend while the new language is
-developed.
+- typed definitions and parameters;
+- dependent and non-dependent function types, lambdas, and application;
+- `let` expressions;
+- exhaustive constructor patterns for a single inductive family;
+- non-dependent matches lowered to the core dependent eliminator;
+- structural recursive calls lowered to the corresponding eliminator
+  hypotheses.
+
+Constructor arity, duplicate branches, family consistency, and exhaustiveness
+are checked during elaboration. Structural recursion is restricted to calls
+recognized through recursive constructor arguments; unrestricted recursion is
+not accepted.
+
+The surface parser cannot yet declare inductive families itself. Current tests
+exercise matching and recursion by elaborating surface definitions against
+inductive metadata already registered in the core. The CLI also has no surface
+mode yet. Surface `data` declarations, dependent pattern matching, cubical
+surface syntax, and higher inductive types are not implemented.
 
 ## Universes
 
@@ -144,8 +167,10 @@ The current design separates:
 Primitive `Nat` and `Bool` will remain during this transition so the generic
 implementation can be tested against the existing behavior.
 
-Pattern matching is intended to elaborate to dependent eliminators rather than
-becoming a separate evaluator mechanism.
+Non-dependent surface pattern matching now elaborates to the existing
+dependent eliminators rather than adding a separate evaluator mechanism.
+Structural recursive calls are lowered to eliminator hypotheses. Surface
+`data` declarations and dependent pattern matching remain future work.
 
 ## Higher inductive types
 
@@ -251,35 +276,22 @@ rules.
 
 ## Development roadmap
 
-The current working order is:
+Completed foundations:
 
-```text
-cumulative universe checking
-        |
-        v
-minimal functional syntax
-        |
-        v
-checked inductive metadata
-        |
-        v
-ordinary inductive types
-        |
-        v
-indexed families: Vec / Fin
-        |
-        v
-dependent eliminators
-        |
-        v
-pattern matching + structural recursion
-        |
-        v
-cubical surface syntax
-        |
-        v
-higher inductive types: Circle
-```
+- [x] minimal functional surface syntax;
+- [x] direct surface-to-core elaboration;
+- [x] checked inductive and constructor metadata;
+- [x] indexed inductive-family and constructor semantics;
+- [x] dependent inductive eliminators;
+- [x] non-dependent pattern matching and structural recursion lowering.
+
+Next milestones:
+
+- [ ] cumulative universe checking;
+- [ ] surface `data` declarations for ordinary and indexed families;
+- [ ] dependent pattern matching;
+- [ ] cubical surface syntax;
+- [ ] higher inductive types, beginning with `Circle`.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate
 propositional equality type, broad global type inference, and premature HIT
