@@ -5,3 +5,5 @@
 //! target language.
 
 pub mod ast;
+mod lower;
+pub mod parser;
