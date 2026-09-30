@@ -230,11 +230,7 @@ impl Parser {
         ) {
             arguments.push(Pattern::Name(self.name()?));
         }
-        if arguments.is_empty() {
-            Ok(Pattern::Name(name))
-        } else {
-            Ok(Pattern::Constructor { name, arguments })
-        }
+        Ok(Pattern::Constructor { name, arguments })
     }
 
     fn arrow(&mut self) -> Result<Expr> {
