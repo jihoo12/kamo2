@@ -36,6 +36,8 @@ pub(crate) enum Term {
     False,
     If(TermId, TermId, TermId, TermId),
     Nat,
+    Inductive(InductiveId),
+    Constructor(ConstructorId),
     Zero,
     Suc(TermId),
     NatElim(TermId, TermId, TermId, TermId),
@@ -80,6 +82,7 @@ pub(crate) type Telescope = Vec<TelescopeEntry>;
 #[derive(Clone, Debug)]
 pub(crate) struct ConstructorDecl {
     pub id: ConstructorId,
+    pub inductive: InductiveId,
     pub name: String,
     pub arguments: Telescope,
     pub result_indices: Vec<TermId>,
@@ -128,6 +131,7 @@ impl Program {
         for (name, arguments, result_indices) in constructors {
             let constructor = ConstructorDecl {
                 id: ConstructorId::new(self.constructors.len()),
+                inductive: id,
                 name,
                 arguments,
                 result_indices,
