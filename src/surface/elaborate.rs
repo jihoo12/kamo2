@@ -270,9 +270,9 @@ impl Elaborator {
             Term::U(level) => Ok(Expr::Universe(level)),
             Term::Bool => Ok(Expr::Bool),
             Term::Nat => Ok(Expr::Nat),
-            Term::Inductive(inductive) => {
-                Ok(Expr::Name(self.core.inductives[inductive.index()].name.clone()))
-            }
+            Term::Inductive(inductive) => Ok(Expr::Name(
+                self.core.inductives[inductive.index()].name.clone(),
+            )),
             Term::App(function, argument) => Ok(Expr::Apply {
                 function: Box::new(self.surface_type(function)?),
                 argument: Box::new(self.surface_type(argument)?),
