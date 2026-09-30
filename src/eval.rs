@@ -55,6 +55,7 @@ pub(crate) enum Val {
     Constructor(ConstructorId),
     Elim {
         inductive: InductiveId,
+        parameters: Vec<ValId>,
         motive: ValId,
         methods: Vec<ValId>,
         indices: Vec<ValId>,
@@ -438,12 +439,14 @@ impl<'a> Engine<'a> {
             ),
             Val::Elim {
                 inductive,
+                parameters,
                 motive,
                 methods,
                 indices,
                 scrutinee,
             } => Val::Elim {
                 inductive,
+                parameters: parameters.into_iter().map(|parameter| self.sub(parameter, s)).collect(),
                 motive: self.sub(motive, s),
                 methods: methods.into_iter().map(|method| self.sub(method, s)).collect(),
                 indices: indices.into_iter().map(|index| self.sub(index, s)).collect(),
@@ -530,12 +533,14 @@ impl<'a> Engine<'a> {
             Term::Constructor(id) => Val::Constructor(id),
             Term::Elim {
                 inductive,
+                parameters,
                 motive,
                 methods,
                 indices,
                 scrutinee,
             } => Val::Elim {
                 inductive,
+                parameters: parameters.into_iter().map(|parameter| self.thunk(parameter, e)).collect(),
                 motive: self.thunk(motive, e),
                 methods: methods.into_iter().map(|method| self.thunk(method, e)).collect(),
                 indices: indices.into_iter().map(|index| self.thunk(index, e)).collect(),
@@ -875,6 +880,7 @@ impl<'a> Engine<'a> {
                 }
                 Val::Elim {
                     inductive,
+                    parameters,
                     motive,
                     methods,
                     indices: _,
@@ -929,6 +935,7 @@ impl<'a> Engine<'a> {
                             let recursive_indices = application[parameter_count..].to_vec();
                             let recursive = self.alloc(Val::Elim {
                                 inductive,
+                                parameters: parameters.clone(),
                                 motive,
                                 methods: methods.clone(),
                                 indices: recursive_indices,
