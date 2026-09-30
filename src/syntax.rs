@@ -36,6 +36,10 @@ pub(crate) enum Term {
     False,
     If(TermId, TermId, TermId, TermId),
     Nat,
+    #[allow(dead_code)]
+    Inductive(InductiveId),
+    #[allow(dead_code)]
+    Constructor(ConstructorId),
     Zero,
     Suc(TermId),
     NatElim(TermId, TermId, TermId, TermId),
@@ -80,6 +84,7 @@ pub(crate) type Telescope = Vec<TelescopeEntry>;
 #[derive(Clone, Debug)]
 pub(crate) struct ConstructorDecl {
     pub id: ConstructorId,
+    pub inductive: InductiveId,
     pub name: String,
     pub arguments: Telescope,
     pub result_indices: Vec<TermId>,
@@ -121,29 +126,39 @@ impl Program {
         universe: u32,
         parameters: Telescope,
         indices: Telescope,
-        constructors: Vec<(String, Telescope, Vec<TermId>)>,
     ) -> InductiveId {
         let id = InductiveId::new(self.inductives.len());
-        let mut constructor_decls = Vec::with_capacity(constructors.len());
-        for (name, arguments, result_indices) in constructors {
-            let constructor = ConstructorDecl {
-                id: ConstructorId::new(self.constructors.len()),
-                name,
-                arguments,
-                result_indices,
-            };
-            self.constructors.push(constructor.clone());
-            constructor_decls.push(constructor);
-        }
         self.inductives.push(InductiveDecl {
             id,
             name,
             universe,
             parameters,
             indices,
-            constructors: constructor_decls,
+            constructors: vec![],
         });
         id
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn push_constructor(
+        &mut self,
+        inductive: InductiveId,
+        name: String,
+        arguments: Telescope,
+        result_indices: Vec<TermId>,
+    ) -> ConstructorId {
+        let constructor = ConstructorDecl {
+            id: ConstructorId::new(self.constructors.len()),
+            inductive,
+            name,
+            arguments,
+            result_indices,
+        };
+        self.constructors.push(constructor.clone());
+        self.inductives[inductive.index()]
+            .constructors
+            .push(constructor.clone());
+        constructor.id
     }
 }
 #[derive(Debug)]
@@ -520,17 +535,10 @@ mod inductive_metadata_tests {
     #[test]
     fn stores_nat_shaped_inductive_metadata() {
         let mut program = Program::default();
-        let pred = entry(&mut program, "pred", Term::Nat);
-        let nat = program.push_inductive(
-            "UserNat".to_owned(),
-            0,
-            vec![],
-            vec![],
-            vec![
-                ("zero".to_owned(), vec![], vec![]),
-                ("suc".to_owned(), vec![pred], vec![]),
-            ],
-        );
+        let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+        program.push_constructor(nat, "zero".to_owned(), vec![], vec![]);
+        let pred = entry(&mut program, "pred", Term::Inductive(nat));
+        program.push_constructor(nat, "suc".to_owned(), vec![pred], vec![]);
 
         let declaration = &program.inductives[nat.index()];
         assert_eq!(declaration.id, nat);
@@ -564,17 +572,16 @@ mod inductive_metadata_tests {
                 name: "length".to_owned(),
                 ty: nat,
             }],
-            vec![
-                ("nil".to_owned(), vec![], vec![zero]),
-                (
-                    "cons".to_owned(),
-                    vec![TelescopeEntry {
-                        name: "n".to_owned(),
-                        ty: nat,
-                    }],
-                    vec![suc_n],
-                ),
-            ],
+        );
+        program.push_constructor(vec, "nil".to_owned(), vec![], vec![zero]);
+        program.push_constructor(
+            vec,
+            "cons".to_owned(),
+            vec![TelescopeEntry {
+                name: "n".to_owned(),
+                ty: nat,
+            }],
+            vec![suc_n],
         );
 
         let declaration = &program.inductives[vec.index()];

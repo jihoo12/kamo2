@@ -2,7 +2,7 @@
 use crate::arena::{Arena, Key, key};
 use crate::face::{Dim, FaceId, Faces};
 use crate::hash::IdMap as HashMap;
-use crate::syntax::{D, F, Program, Term, TermId};
+use crate::syntax::{ConstructorId, D, F, InductiveId, Program, TelescopeEntry, Term, TermId};
 use crate::{Error, Result, Statistics};
 key!(ValId);
 key!(EnvId);
@@ -51,6 +51,8 @@ pub(crate) enum Val {
     True,
     False,
     Nat,
+    Inductive(InductiveId),
+    Constructor(ConstructorId),
     Zero,
     Suc(ValId),
     If(ValId, ValId, ValId, ValId),
@@ -266,7 +268,14 @@ impl<'a> Engine<'a> {
     fn sub_uncached(&mut self, v: ValId, s: SubId) -> ValId {
         if self.optimized {
             match self.get(v) {
-                Val::U(_) | Val::Bool | Val::Nat | Val::True | Val::False | Val::Zero => return v,
+                Val::U(_)
+                | Val::Bool
+                | Val::Nat
+                | Val::Inductive(_)
+                | Val::Constructor(_)
+                | Val::True
+                | Val::False
+                | Val::Zero => return v,
                 Val::Susp(t, e)
                     if matches!(self.program.terms.get(t).term, Term::Global(_))
                         || (self.envs.get(e).terms.is_empty()
@@ -379,7 +388,14 @@ impl<'a> Engine<'a> {
                 }
                 Val::Var(x, ty.map(|t| self.sub(t, s)))
             }
-            Val::U(_) | Val::Bool | Val::Nat | Val::True | Val::False | Val::Zero => return v,
+            Val::U(_)
+            | Val::Bool
+            | Val::Nat
+            | Val::Inductive(_)
+            | Val::Constructor(_)
+            | Val::True
+            | Val::False
+            | Val::Zero => return v,
             Val::Pi(a, b) => {
                 let a = self.sub(a, s);
                 let b = self.sub_binder(b, s, false);
@@ -490,6 +506,8 @@ impl<'a> Engine<'a> {
             Term::True => Val::True,
             Term::False => Val::False,
             Term::Nat => Val::Nat,
+            Term::Inductive(id) => Val::Inductive(id),
+            Term::Constructor(id) => Val::Constructor(id),
             Term::Zero => Val::Zero,
             Term::Pi(a, b) => {
                 let a = self.thunk(a, e);
@@ -662,6 +680,8 @@ impl<'a> Engine<'a> {
             }
             (Val::Var(x, _), Val::Var(y, _)) => Ok(x == y),
             (Val::U(x), Val::U(y)) => Ok(x == y),
+            (Val::Inductive(x), Val::Inductive(y)) => Ok(x == y),
+            (Val::Constructor(x), Val::Constructor(y)) => Ok(x == y),
             (Val::Bool, Val::Bool)
             | (Val::Nat, Val::Nat)
             | (Val::Zero, Val::Zero)
@@ -925,10 +945,66 @@ impl<'a> Engine<'a> {
         }
         Ok(v)
     }
+    fn bind_telescope<F>(
+        &mut self,
+        entries: &[TelescopeEntry],
+        index: usize,
+        env: EnvId,
+        tail: F,
+    ) -> ValId
+    where
+        F: FnOnce(&mut Self, EnvId) -> ValId,
+    {
+        if index == entries.len() {
+            return tail(self, env);
+        }
+        let domain = self.thunk(entries[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+        let body = self.bind_telescope(entries, index + 1, next, tail);
+        self.alloc(Val::Pi(domain, Binder { var, body }))
+    }
+
+    pub fn inductive_type(&mut self, id: InductiveId) -> ValId {
+        let declaration = self.program.inductives[id.index()].clone();
+        let env = self.env(Env::default());
+        self.bind_telescope(&declaration.parameters, 0, env, |engine, env| {
+            engine.bind_telescope(&declaration.indices, 0, env, |engine, _| {
+                engine.alloc(Val::U(declaration.universe))
+            })
+        })
+    }
+
+    pub fn constructor_type(&mut self, id: ConstructorId) -> ValId {
+        let constructor = self.program.constructors[id.index()].clone();
+        let family = self.program.inductives[constructor.inductive.index()].clone();
+        let env = self.env(Env::default());
+        self.bind_telescope(&family.parameters, 0, env, |engine, env| {
+            let parameter_count = family.parameters.len();
+            engine.bind_telescope(&constructor.arguments, 0, env, |engine, env| {
+                let values = engine.environment(env).terms;
+                let mut result = engine.alloc(Val::Inductive(constructor.inductive));
+                for parameter in values.iter().take(parameter_count) {
+                    result = engine.app(result, *parameter);
+                }
+                for index in &constructor.result_indices {
+                    let value = engine.thunk(*index, env);
+                    result = engine.app(result, value);
+                }
+                result
+            })
+        })
+    }
+
     pub fn neutral_type(&mut self, v: ValId, face: FaceId) -> Result<ValId> {
         let v = self.force(v, face)?;
         match self.get(v) {
             Val::Var(_, Some(ty)) => Ok(ty),
+            Val::Inductive(id) => Ok(self.inductive_type(id)),
+            Val::Constructor(id) => Ok(self.constructor_type(id)),
             Val::App(f, a) => {
                 let ty = self.neutral_type(f, face)?;
                 let ty = self.force(ty, face)?;
