@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 pub type Result<T> = std::result::Result<T, Error>;
 /// Bounds parser allocation; evaluation has separate work and arena budgets.
 pub const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_MODULE_IMPORT_DEPTH: usize = 64;
+const MAX_IMPORTED_MODULES: usize = 1024;
+const MAX_TRANSITIVE_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Error {
@@ -138,10 +141,16 @@ impl CheckedProgram {
     pub fn check_surface_file_with(path: impl AsRef<Path>, options: Options) -> Result<Self> {
         fn visit(
             path: &Path,
+            depth: usize,
+            module_count: &mut usize,
+            total_source_bytes: &mut usize,
             seen: &mut HashSet<PathBuf>,
             active: &mut HashSet<PathBuf>,
             items: &mut Vec<surface::ast::Item>,
         ) -> Result<()> {
+            if depth >= MAX_MODULE_IMPORT_DEPTH {
+                return Err(Error::plain("module import depth budget exceeded"));
+            }
             let path = path
                 .canonicalize()
                 .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
@@ -154,6 +163,10 @@ impl CheckedProgram {
                     path.display()
                 )));
             }
+            if *module_count >= MAX_IMPORTED_MODULES {
+                return Err(Error::plain("module count budget exceeded"));
+            }
+            *module_count += 1;
             let source = std::fs::read_to_string(&path)
                 .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
             if source.len() > MAX_SOURCE_BYTES {
@@ -161,6 +174,12 @@ impl CheckedProgram {
                     "{}: source size budget exceeded",
                     path.display()
                 )));
+            }
+            *total_source_bytes = total_source_bytes
+                .checked_add(source.len())
+                .ok_or_else(|| Error::plain("transitive source size budget exceeded"))?;
+            if *total_source_bytes > MAX_TRANSITIVE_SOURCE_BYTES {
+                return Err(Error::plain("transitive source size budget exceeded"));
             }
             let parsed = surface::parser::parse(&source)?;
             for import in &parsed.imports {
@@ -170,6 +189,9 @@ impl CheckedProgram {
                 let relative = format!("{}.kamo", import.replace('.', "/"));
                 visit(
                     &path.parent().unwrap_or(Path::new(".")).join(relative),
+                    depth + 1,
+                    module_count,
+                    total_source_bytes,
                     seen,
                     active,
                     items,
@@ -181,11 +203,17 @@ impl CheckedProgram {
             Ok(())
         }
 
-        let mut surface = surface::parser::parse(include_str!("../std/prelude.kamo"))?;
+        let prelude = include_str!("../std/prelude.kamo");
+        let mut surface = surface::parser::parse(prelude)?;
         let mut seen = HashSet::new();
         let mut active = HashSet::new();
+        let mut module_count = 0;
+        let mut total_source_bytes = prelude.len();
         visit(
             path.as_ref(),
+            0,
+            &mut module_count,
+            &mut total_source_bytes,
             &mut seen,
             &mut active,
             &mut surface.declarations,

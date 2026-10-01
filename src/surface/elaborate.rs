@@ -60,6 +60,20 @@ impl Elaborator {
         Ok(constructor)
     }
 
+    fn name_is_taken(&self, name: &str) -> bool {
+        self.globals.contains_key(name)
+            || self
+                .core
+                .inductives
+                .iter()
+                .any(|inductive| inductive.name == name)
+            || self
+                .core
+                .constructors
+                .iter()
+                .any(|constructor| constructor.name == name)
+    }
+
     fn inductive_application(
         &self,
         expr: &Expr,
@@ -153,13 +167,7 @@ impl Elaborator {
     }
 
     fn data_declaration(&mut self, data: &DataDeclaration) -> Result<()> {
-        if self.globals.contains_key(&data.name)
-            || self
-                .core
-                .inductives
-                .iter()
-                .any(|item| item.name == data.name)
-        {
+        if self.name_is_taken(&data.name) {
             return Err(Error::plain(format!(
                 "duplicate declaration '{}'",
                 data.name
@@ -188,15 +196,10 @@ impl Elaborator {
                 .push_inductive(data.name.clone(), data.universe, parameters, indices);
 
         for constructor in &data.constructors {
-            if self
-                .core
-                .constructors
-                .iter()
-                .any(|item| item.name == constructor.name)
-            {
+            if self.name_is_taken(&constructor.name) {
                 self.locals.truncate(saved);
                 return Err(Error::plain(format!(
-                    "duplicate constructor '{}'",
+                    "duplicate declaration or constructor name '{}'",
                     constructor.name
                 )));
             }
@@ -247,7 +250,7 @@ impl Elaborator {
     }
 
     fn declaration(&mut self, declaration: &Declaration) -> Result<()> {
-        if self.globals.contains_key(&declaration.name) {
+        if self.name_is_taken(&declaration.name) {
             return Err(Error::plain("duplicate or reserved declaration name"));
         }
         let ty_expr = declaration

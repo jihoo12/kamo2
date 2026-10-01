@@ -392,10 +392,7 @@ fn split_kind(mut kind: Expr) -> Result<(Vec<(String, Expr)>, u32)> {
                 domain,
                 codomain,
             } => {
-                indices.push((
-                    parameter.unwrap_or_else(|| format!("_index{}", indices.len())),
-                    *domain,
-                ));
+                indices.push((parameter.unwrap_or_default(), *domain));
                 kind = *codomain;
             }
             _ => return Err(Error::plain("data kind must end in Type")),
@@ -411,10 +408,7 @@ fn split_constructor(mut ty: Expr) -> (Vec<(String, Expr)>, Expr) {
         codomain,
     } = ty
     {
-        arguments.push((
-            parameter.unwrap_or_else(|| format!("_arg{}", arguments.len())),
-            *domain,
-        ));
+        arguments.push((parameter.unwrap_or_default(), *domain));
         ty = *codomain;
     }
     (arguments, ty)

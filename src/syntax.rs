@@ -288,8 +288,12 @@ impl Program {
                 self.validate_scoped(*c, bound, depth + 1)?;
             }
             Term::Suc(a) => self.validate_scoped(*a, bound, depth + 1)?,
-            Term::Global(_)
-            | Term::U(_)
+            Term::Global(_) => {
+                return Err(Error::plain(
+                    "global aliases are not allowed in inductive metadata",
+                ));
+            }
+            Term::U(_)
             | Term::Bool
             | Term::True
             | Term::False
@@ -826,6 +830,35 @@ mod inductive_metadata_tests {
                 .unwrap_err()
                 .message
                 .contains("negative")
+        );
+    }
+
+    #[test]
+    fn trusted_validation_rejects_global_aliases_that_could_hide_negativity() {
+        let mut program = Program::default();
+        let family = program.push_inductive("D".to_owned(), 0, vec![], vec![]);
+        let universe = program.alloc(Term::U(0), 0);
+        let recursive = program.alloc(Term::Inductive(family), 0);
+        let nat = program.alloc(Term::Nat, 0);
+        let negative_alias = program.alloc(Term::Pi(recursive, nat), 0);
+        program.push_decl("Neg".to_owned(), universe, negative_alias);
+        let alias = program.alloc(Term::Global(0), 0);
+        program.push_constructor(
+            family,
+            "bad".to_owned(),
+            vec![TelescopeEntry {
+                name: "hidden".to_owned(),
+                ty: alias,
+            }],
+            vec![],
+            vec![],
+        );
+        assert!(
+            program
+                .validate_inductives()
+                .unwrap_err()
+                .message
+                .contains("global aliases")
         );
     }
 }

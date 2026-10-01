@@ -126,18 +126,24 @@ in checked core metadata.
 
 ## Conservative generic cubical composition
 
-User-defined ordinary inductives have constructor-directed composition for the
-supported fragment. Reduction requires a known cap constructor and the same
-constructor on every relevant nonempty tube. Uniform parameters must agree with
-the source and target family, each dependent field domain must be definitionally
-stable, and the constructor result indices reconstructed from the composed
-fields must agree with the target indices. Direct recursive fields are composed
-using the same generic rule.
+User-defined ordinary inductives have constructor-directed composition for a
+dimensionwise-constant fragment. Reduction requires a known cap constructor and
+the same constructor on every relevant nonempty tube. Every generic parameter
+and index line must convert to both endpoints; endpoint equality alone is not
+enough. Every tube field must equal the cap field on its face, and each field
+composition must convert back to that cap field.
 
-If constructor shape is neutral or differs across a boundary, parameters vary,
-or field/index coherence cannot be established by conversion, composition stays
-as a neutral `Com`. This is intentionally not a general schema for nested
-strictly-positive functors and is not a HIT composition rule.
+Consequently, dependent constructor fields are not composed through a genuinely
+varying previous-field filler. Their domains may be instantiated with previous
+cap fields only because those fields have already been proved dimensionwise
+constant. This retains constant `UserNat`, `Option Bool`, and `Vec` cases while
+blocking open parameter/index paths.
+
+If constructor shape is neutral or differs across a boundary, parameters or
+indices vary, a field is not provably constant, or field/index coherence cannot
+be established by conversion, composition stays as a neutral `Com`. This is
+intentionally not a full dependent structural-composition rule, a schema for
+nested strictly-positive functors, or a HIT composition rule.
 
 ## Relation to Cartesian cubical structure
 

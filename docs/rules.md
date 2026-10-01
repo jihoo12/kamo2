@@ -25,11 +25,16 @@ a reducible head.
 Generic inductive declarations cross a kernel validation boundary before any
 ordinary declaration is checked. The validator checks scoped and well-sorted
 telescopes, constructor ownership, complete result indices, and exact recursive
-argument metadata. Its strict-positivity fragment permits only direct recursive
-arguments with unchanged parameters; negative and nested occurrences are
-rejected. Composition preserves a constructor only when all nonempty boundary
-pieces expose that constructor. If parameter, dependent-field, or index
-coherence cannot be established by conversion, composition remains neutral.
+argument metadata. Global aliases are rejected in positivity-relevant metadata,
+so a transparent definition cannot hide a negative recursive occurrence. The
+strict-positivity fragment permits only direct recursive arguments with
+unchanged parameters; negative and nested occurrences are rejected.
+
+Composition preserves a constructor only when all nonempty boundary pieces
+expose that constructor, each generic parameter/index line converts to both
+endpoints, and every field is provably constant along the composition. Equality
+of the two endpoints is explicitly insufficient. Dependent fields are therefore
+supported only in this constant fragment; otherwise composition remains neutral.
 
 The interval remains Cartesian: dimensions are endpoints or variables, while
 `and` and `or` combine face propositions. They are not interval meet/join, and

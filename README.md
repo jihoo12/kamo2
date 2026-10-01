@@ -170,9 +170,10 @@ The current implementation includes:
 The core primitives remain for compatibility with the S-expression language,
 but surface `Nat`, `Bool`, and `Vec` use the same generic inductive-family
 metadata, eliminator, and iota computation as user declarations.
-Generic composition is constructor-directed and covers direct-recursive,
-parameterized, and indexed examples when parameters, dependent field types, and
-result indices are definitionally coherent. Ambiguous or varying cases remain
+Generic composition is constructor-directed and covers dimensionwise-constant
+direct-recursive, parameterized, and indexed examples. The generic parameter and
+index lines—not merely their endpoints—must convert to both endpoints, and each
+field composition must be provably constant. Varying or ambiguous cases remain
 neutral rather than applying an unsound fallback.
 
 Non-dependent surface pattern matching now elaborates to the existing
