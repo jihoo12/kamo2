@@ -55,3 +55,32 @@ fn standard_nat_and_bool_are_generic_data() {
         "(app (app (app (app cons Bool) zero) true) (app nil Bool))"
     );
 }
+
+#[test]
+fn strict_positivity_rejects_negative_nested_and_non_uniform_recursion() {
+    for (source, expected) in [
+        (
+            "data Bad : Type where { bad : (Bad -> Nat) -> Bad }",
+            "nested or negative recursive occurrence",
+        ),
+        (
+            "data Bad : Type where { bad : Vec Bad zero -> Bad }",
+            "nested or negative recursive occurrence",
+        ),
+        (
+            "data Bad (A : Type) : Type where { bad : Bad Bool -> Bad A }",
+            "changes a uniform parameter",
+        ),
+    ] {
+        let error = CheckedProgram::check_surface(source).unwrap_err();
+        assert!(error.message.contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn inductive_telescopes_are_semantically_checked() {
+    let error =
+        CheckedProgram::check_surface("data Bad : Type where { bad : (not-a-type : true) -> Bad }")
+            .unwrap_err();
+    assert!(error.message.contains("expected a type"), "{error}");
+}

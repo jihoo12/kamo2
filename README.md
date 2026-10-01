@@ -103,6 +103,8 @@ language. The core includes:
 - checked metadata and semantics for indexed inductive families and
   constructors;
 - dependent inductive eliminators with iota computation;
+- trusted strict-positivity/metadata validation and conservative structural
+  composition for generic ordinary inductives;
 - normalization-by-evaluation style semantic checking/evaluation machinery;
 - resource limits and reference/optimized evaluator modes.
 
@@ -165,15 +167,13 @@ The current implementation includes:
 3. dependent eliminators and iota computation;
 4. surface `data` elaboration and ordinary constructor matching.
 
-Generic cubical composition for user-defined inductive families is **not yet
-implemented**. The evaluator still has constructor-directed composition only for
-the primitive `Bool`/`Nat` core forms. This distinction matters: generic
-elimination support is not a claim of full cubical stability for user-defined
-families.
-
 The core primitives remain for compatibility with the S-expression language,
 but surface `Nat`, `Bool`, and `Vec` use the same generic inductive-family
 metadata, eliminator, and iota computation as user declarations.
+Generic composition is constructor-directed and covers direct-recursive,
+parameterized, and indexed examples when parameters, dependent field types, and
+result indices are definitionally coherent. Ambiguous or varying cases remain
+neutral rather than applying an unsound fallback.
 
 Non-dependent surface pattern matching now elaborates to the existing
 dependent eliminators rather than adding a separate evaluator mechanism.
@@ -295,12 +295,12 @@ Completed foundations:
 - [x] checked inductive and constructor metadata;
 - [x] indexed inductive-family and constructor semantics;
 - [x] dependent inductive eliminators;
+- [x] conservative generic ordinary-inductive composition;
+- [x] surface `data` declarations for ordinary and indexed families;
 - [x] non-dependent pattern matching and structural recursion lowering.
 
 Next milestones:
 
-- [x] cumulative universe checking;
-- [x] surface `data` declarations for ordinary and indexed families;
 - [ ] dependent pattern matching;
 - [ ] cubical surface syntax;
 - [ ] higher inductive types, beginning with `Circle`.

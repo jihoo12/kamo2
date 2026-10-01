@@ -11,6 +11,63 @@ struct Context {
     face: FaceId,
 }
 impl Engine<'_> {
+    pub fn check_inductive_declarations(&mut self) -> Result<()> {
+        for family in self.program.inductives.clone() {
+            let env = self.env(Env::default());
+            let mut context = Context {
+                env,
+                types: vec![],
+                face: self.faces.top(),
+            };
+            for entry in &family.parameters {
+                self.sort(entry.ty, &context)?;
+                let ty = self.thunk(entry.ty, context.env);
+                let (next, _) = self.extend(&context, ty);
+                context = next;
+            }
+            for entry in &family.indices {
+                self.sort(entry.ty, &context)?;
+                let ty = self.thunk(entry.ty, context.env);
+                let (next, _) = self.extend(&context, ty);
+                context = next;
+            }
+            for constructor_id in family.constructors {
+                let constructor = self.program.constructors[constructor_id.index()].clone();
+                let env = self.env(Env::default());
+                let mut constructor_context = Context {
+                    env,
+                    types: vec![],
+                    face: self.faces.top(),
+                };
+                let mut parameter_values = Vec::new();
+                for entry in &family.parameters {
+                    let ty = self.thunk(entry.ty, constructor_context.env);
+                    let (next, value) = self.extend(&constructor_context, ty);
+                    constructor_context = next;
+                    parameter_values.push(value);
+                }
+                for entry in &constructor.arguments {
+                    self.sort(entry.ty, &constructor_context)?;
+                    let ty = self.thunk(entry.ty, constructor_context.env);
+                    let (next, _) = self.extend(&constructor_context, ty);
+                    constructor_context = next;
+                }
+                let mut index_environment = Env::default();
+                index_environment.terms.extend_from_slice(&parameter_values);
+                let mut index_environment = self.env(index_environment);
+                for (entry, result) in family.indices.iter().zip(&constructor.result_indices) {
+                    let domain = self.thunk(entry.ty, index_environment);
+                    self.check(*result, domain, &constructor_context)?;
+                    let value = self.thunk(*result, constructor_context.env);
+                    let mut next = self.environment(index_environment);
+                    next.terms.push(value);
+                    index_environment = self.env(next);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn check_declaration(&mut self, index: usize) -> Result<()> {
         let decl = &self.program.decls[index];
         {

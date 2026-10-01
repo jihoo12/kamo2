@@ -160,3 +160,56 @@ soundness oracle. The native Glue/universe constructions have not been formally
 verified by this audit, and passing a univalence theorem in this same kernel
 cannot establish its soundness. No source-level false proof was found in the
 reviewed cases. This does not rule one out.
+
+## Pre-HIT ordinary-inductive audit — 2026-10-01
+
+This pass audited the ordinary-inductive trust boundary before adding any
+higher constructors. No HIT syntax, path constructors, HIT eliminators, or
+De Morgan interval operations were added.
+
+### Hardened trust boundaries
+
+- Resolved inductive metadata is structurally validated before checking any
+  definitions: IDs/ownership, de Bruijn scope, complete result indices, direct
+  recursive occurrences, unchanged uniform parameters, and exact recursive
+  argument annotations must agree.
+- A second semantic pass checks parameter/index/constructor telescopes as types
+  and checks constructor result indices against their dependent index domains.
+- Strict positivity is intentionally incomplete but conservative. Only a whole
+  constructor argument of the form `D parameters indices` may recurse. Negative
+  occurrences and nested occurrences are rejected rather than assigned an
+  unproved variance rule.
+- Generic eliminator iota reduction continues to derive recursive calls only
+  from the now-revalidated recursive-argument metadata.
+
+### Cubical composition boundary
+
+Generic ordinary data uses constructor-directed composition. Reduction occurs
+only for a common known constructor. Uniform parameters must be preserved,
+dependent field domains must be definitionally stable, and evaluated result
+indices must equal the target family indices. Every field is composed, including
+direct recursive fields. Failure to establish any of these facts blocks the
+composition as a neutral `Com`.
+
+Tests cover direct recursion, a parameterized family, indexed `Vec`, mismatched
+constructor blocking, face-triggered endpoint reduction, and both evaluator
+modes. Face regressions additionally cover substitution-preserved entailment,
+equality transitivity/diagonals, contradictory endpoints, conjunction,
+disjunction, overlap, generic quantification, and the non-Boolean interval law.
+
+### Remaining kernel-level blockers before a first HIT
+
+- There is no checked representation for higher-constructor boundaries or their
+  coherence obligations. This must be designed rather than encoded in ordinary
+  `ConstructorDecl`.
+- The eliminator metadata has no boundary/coherence methods for higher
+  constructors.
+- Composition for ordinary data is deliberately conservative and is not a
+  generic higher-inductive composition schema. HIT composition must integrate
+  constructor boundaries without weakening the blocking/coherence checks.
+- The kernel still lacks a mechanized metatheory; the shared optimized/reference
+  reduction code is testing evidence, not an independent soundness proof.
+
+The Cartesian interval invariant remains unchanged: only `0`, `1`, and variables
+are dimensions; conjunction/disjunction operate on faces. There is no interval
+reversal, meet, join, or endpoint enumeration.

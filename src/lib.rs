@@ -194,6 +194,12 @@ impl CheckedProgram {
     }
 
     fn check_program(program: syntax::Program, options: Options) -> Result<Self> {
+        program.validate_inductives()?;
+        {
+            let mut engine =
+                eval::Engine::new(&program, options.optimized, options.fuel, options.max_nodes);
+            engine.check_inductive_declarations()?;
+        }
         for index in 0..program.decls.len() {
             let mut engine =
                 eval::Engine::new(&program, options.optimized, options.fuel, options.max_nodes);

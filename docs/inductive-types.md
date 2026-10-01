@@ -45,7 +45,10 @@ The current implementation includes:
 - neutral eliminators;
 - quotation/conversion support;
 - surface `data` declarations;
-- ordinary constructor pattern matching elaborated above the core.
+- ordinary constructor pattern matching elaborated above the core;
+- trusted metadata validation before definition checking;
+- conservative constructor-directed composition for non-indexed, parameterized,
+  recursive, and indexed ordinary families.
 
 This is enough to define and eliminate indexed families such as `Vec` without
 adding a dedicated Rust variant for each user-defined family.
@@ -67,6 +70,23 @@ relation.
 
 Mutual inductive families, higher inductive constructors, and more permissive
 forms of nested recursion are outside the current fragment.
+
+
+## Strict positivity and trusted validation
+
+The supported positivity fragment is deliberately conservative. A recursive
+occurrence is accepted only when an entire constructor argument has the form
+`D parameters indices`, with every parameter and index supplied and every
+uniform parameter unchanged. Indexed direct recursion such as `tail : Vec A n`
+is accepted. Negative occurrences such as `(D -> Nat) -> D`, nested occurrences
+such as `List D`, and higher-order recursion are rejected.
+
+This is a trusted-core rule rather than a surface-parser convention. Before any
+ordinary definition is checked, the kernel revalidates metadata IDs and
+ownership, de Bruijn scope, result-index arity, constructor result indices, and
+the exact recursive-argument list. A semantic pass then checks that all
+parameter, index, and constructor telescopes are types and that dependent result
+indices inhabit their declared domains.
 
 ## Dependent elimination and iota computation
 
@@ -104,23 +124,20 @@ Their continued presence does not mean user-defined inductive families are only
 surface encodings: generic families and eliminators are represented explicitly
 in checked core metadata.
 
-## Important cubical limitation
+## Conservative generic cubical composition
 
-User-defined inductive families do **not yet** have generic structural
-composition.
+User-defined ordinary inductives have constructor-directed composition for the
+supported fragment. Reduction requires a known cap constructor and the same
+constructor on every relevant nonempty tube. Uniform parameters must agree with
+the source and target family, each dependent field domain must be definitionally
+stable, and the constructor result indices reconstructed from the composed
+fields must agree with the target indices. Direct recursive fields are composed
+using the same generic rule.
 
-The evaluator still contains constructor-directed composition rules for the
-primitive `Bool` and `Nat` values, but composition over an arbitrary
-user-defined inductive family is not implemented.
-
-Therefore:
-
-> support for formation, construction, dependent elimination, iota reduction,
-> and pattern matching must not be described as full cubical stability for
-> user-defined inductive families.
-
-A future composition rule must specify how constructor shape, recursive fields,
-indices, and dependent fields remain coherent under Cartesian composition.
+If constructor shape is neutral or differs across a boundary, parameters vary,
+or field/index coherence cannot be established by conversion, composition stays
+as a neutral `Com`. This is intentionally not a general schema for nested
+strictly-positive functors and is not a HIT composition rule.
 
 ## Relation to Cartesian cubical structure
 
@@ -136,7 +153,6 @@ Cartesian structure rather than assuming interval meet, join, or reversal.
 
 The major remaining design areas are:
 
-- generic cubical composition for supported inductive families;
 - richer positivity/nested-recursion policies;
 - mutual inductive families;
 - an explicit large-elimination policy;
