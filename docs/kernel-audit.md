@@ -213,3 +213,37 @@ disjunction, overlap, generic quantification, and the non-Boolean interval law.
 The Cartesian interval invariant remains unchanged: only `0`, `1`, and variables
 are dimensions; conjunction/disjunction operate on faces. There is no interval
 reversal, meet, join, or endpoint enumeration.
+
+## Dimension-varying inductive follow-up — 2026-10-01
+
+An adversarial follow-up found that the first generic composition rule checked
+only source/target parameter equality and then used the target constructor-field
+domain as a constant composition family. This was not sufficient: an open line
+`A(i) = p @ i` can have `A(0) = A(1) = Bool` without being constant. The same
+issue applied to indexed families and fields depending on earlier constructor
+arguments.
+
+The implementation now takes the conservative option. Each generic family
+parameter and index must itself convert to both endpoints. Field domains are
+checked at the generic dimension as well as both endpoints, tube fields must
+equal cap fields on their faces, and the resulting field composition must equal
+the cap. Only then may later dependent domains use the cap as a constant filler.
+There is no claim that genuinely varying dependent constructor fields are
+structurally composed.
+
+Permanent evaluator regressions use a neutral universe path
+`p : Path (U 0) Bool Bool` for `Option (p @ i)` and a neutral loop
+`q : Path Nat zero zero` in the index of `Vec Bool (suc (q @ i))`. Both have
+equal endpoints and must remain neutral. Constant `Option Bool`, direct-recursive
+`UserNat`, and constant indexed `Vec` cases continue to reduce in both evaluator
+modes.
+
+The positivity audit also found that treating `Term::Global` as opaque would let
+arbitrary internal metadata hide an occurrence behind a transparent alias. The
+trusted validator now rejects global aliases in inductive metadata rather than
+claiming to unfold them safely.
+
+This rejection is an intentional trusted-core restriction, not an elaborator
+heuristic: future support for aliases in constructor telescopes must first add
+cycle-bounded transparent unfolding to the metadata validator and restore the
+forged-negative-alias regression as an unfolding test.

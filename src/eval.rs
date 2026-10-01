@@ -1470,12 +1470,18 @@ impl<'a> Engine<'a> {
         {
             return Ok(None);
         }
-        for (source, target) in source_arguments
+        // Endpoint agreement is not enough: an open line A(i) may have equal
+        // endpoints without being dimensionwise constant. This implementation
+        // has no general parameter/index filler rule, so reduce only when the
+        // generic argument itself converts to both endpoints.
+        for ((generic, source), target) in family_arguments
             .iter()
+            .zip(&source_arguments)
             .zip(&target_arguments)
-            .take(parameter_count)
         {
-            if !self.conv(*source, *target, None, face)? {
+            if !self.conv(*generic, *source, None, face)?
+                || !self.conv(*generic, *target, None, face)?
+            {
                 return Ok(None);
             }
         }
@@ -1536,6 +1542,7 @@ impl<'a> Engine<'a> {
 
         let source_parameters = source_arguments[..parameter_count].to_vec();
         let target_parameters = target_arguments[..parameter_count].to_vec();
+        let generic_parameters = family_arguments[..parameter_count].to_vec();
         let cap_fields = &cap_spine[parameter_count..];
         let mut result_fields = Vec::with_capacity(constructor.arguments.len());
         for argument_index in 0..constructor.arguments.len() {
@@ -1551,7 +1558,18 @@ impl<'a> Engine<'a> {
                 &result_fields,
                 argument_index,
             );
-            if !self.conv(source_domain, target_domain, None, face)? {
+            // Previous fields are used here only after they have been proved
+            // dimensionwise constant below. Thus cap_fields is a valid generic
+            // instantiation for dependent argument domains in this fragment.
+            let generic_domain = self.constructor_argument_domain(
+                &constructor,
+                &generic_parameters,
+                cap_fields,
+                argument_index,
+            );
+            if !self.conv(generic_domain, source_domain, None, face)?
+                || !self.conv(generic_domain, target_domain, None, face)?
+            {
                 return Ok(None);
             }
             let mut tubes = Vec::with_capacity(tube_spines.len());
@@ -1564,17 +1582,36 @@ impl<'a> Engine<'a> {
                     tube_fields,
                     argument_index,
                 );
-                if !self.conv(tube_domain, target_domain, None, *under)? {
+                if !self.conv(tube_domain, generic_domain, None, *under)?
+                    || !self.conv(
+                        tube_fields[argument_index],
+                        cap_fields[argument_index],
+                        Some(generic_domain),
+                        *under,
+                    )?
+                {
                     return Ok(None);
                 }
                 tubes.push((*tube_face, tube_fields[argument_index]));
             }
-            result_fields.push(self.alloc(Val::Com(Composition {
-                family: target_domain,
+            let field = self.alloc(Val::Com(Composition {
+                family: generic_domain,
                 cap: cap_fields[argument_index],
                 tubes,
                 ..c.clone()
-            })));
+            }));
+            // Without an actual filler telescope, a later dependent field may
+            // only use this field when composition proved it constant. Requiring
+            // every field to be constant also protects dependent result indices.
+            if !self.conv(
+                field,
+                cap_fields[argument_index],
+                Some(generic_domain),
+                face,
+            )? {
+                return Ok(None);
+            }
+            result_fields.push(field);
         }
 
         let mut env = Env::default();
@@ -1810,6 +1847,37 @@ mod tests {
             assert_eq!(arguments.len(), 2);
             assert!(e.conv(arguments[0], bool_ty, None, face).unwrap());
             assert_eq!(e.force(arguments[1], face).unwrap(), true_value);
+
+            // Endpoint equality does not make an open universe line constant.
+            // The old endpoint-only check incorrectly rebuilt `some true` here.
+            let universe = e.alloc(Val::U(0));
+            let path_dimension = e.fresh_dim();
+            let universe_path = e.alloc(Val::Path(
+                Binder {
+                    var: path_dimension,
+                    body: universe,
+                },
+                bool_ty,
+                bool_ty,
+            ));
+            let parameter_path = e.variable(universe_path);
+            let composition_dimension = e.fresh_dim();
+            let open_parameter = e.at(parameter_path, Dim::Var(composition_dimension));
+            let open_at_zero = e.restrict(open_parameter, composition_dimension, Dim::Zero);
+            let open_at_one = e.restrict(open_parameter, composition_dimension, Dim::One);
+            assert_eq!(e.force(open_at_zero, face).unwrap(), bool_ty);
+            assert_eq!(e.force(open_at_one, face).unwrap(), bool_ty);
+            let open_family = e.app(family_head, open_parameter);
+            let open_composition = e.alloc(Val::Com(Composition {
+                dim: composition_dimension,
+                family: open_family,
+                from: Dim::Zero,
+                to: Dim::One,
+                cap: value,
+                tubes: vec![],
+            }));
+            let blocked = e.force(open_composition, face).unwrap();
+            assert!(matches!(e.get(blocked), Val::Com(_)));
         }
     }
 
@@ -1987,6 +2055,38 @@ mod tests {
         );
         assert!(e.conv(composed_arguments[1], zero, None, face).unwrap());
         assert_eq!(e.force(composed_arguments[2], face).unwrap(), true_value);
+
+        // The index line has equal endpoints but is neutral in its interior.
+        // In particular, the dependent tail domain Vec Bool (n i) cannot be
+        // replaced with the target endpoint domain Vec Bool zero.
+        let index_path_dimension = e.fresh_dim();
+        let index_path_type = e.alloc(Val::Path(
+            Binder {
+                var: index_path_dimension,
+                body: nat_result,
+            },
+            zero,
+            zero,
+        ));
+        let index_path = e.variable(index_path_type);
+        let varying_dimension = e.fresh_dim();
+        let varying_n = e.at(index_path, Dim::Var(varying_dimension));
+        let n_at_zero = e.restrict(varying_n, varying_dimension, Dim::Zero);
+        let n_at_one = e.restrict(varying_n, varying_dimension, Dim::One);
+        assert_eq!(e.force(n_at_zero, face).unwrap(), zero);
+        assert_eq!(e.force(n_at_one, face).unwrap(), zero);
+        let varying_one = e.alloc(Val::Suc(varying_n));
+        let varying_family = e.app(vec_bool, varying_one);
+        let varying_composition = e.alloc(Val::Com(Composition {
+            dim: varying_dimension,
+            family: varying_family,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: singleton,
+            tubes: vec![],
+        }));
+        let varying_composition = e.force(varying_composition, face).unwrap();
+        assert!(matches!(e.get(varying_composition), Val::Com(_)));
 
         let elim = e.alloc(Val::Elim {
             inductive: vec,
