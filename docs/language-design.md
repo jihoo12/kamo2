@@ -21,6 +21,8 @@ The current system already has:
   refinement and structural-recursion lowering;
 - conservative constructor-directed composition for the dimensionwise-constant
   ordinary-inductive fragment;
+- homogeneous surface path equality (`==`), path abstraction (`path`), and
+  dimension application (`@`), elaborated to existing core paths;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -105,24 +107,33 @@ general match-result inference remain future work.
 
 ### Cubical surface syntax
 
-The core cubical operations exist, but their surface presentation can become
-more readable.
-
-A target notation is conceptually:
+The first ergonomic cubical surface slice is implemented:
 
 ```text
 x == y
-
 path i => t
-
 p @ i
+p @ 0
+p @ 1
 ```
 
-where equality elaborates to `Path`, path abstraction to the core path
-lambda, and path application to the existing path application form.
+`==` denotes homogeneous, constant-family path equality. Its family is inferred
+from the left endpoint and both endpoints are checked by the kernel. The family
+is lowered under a fresh anonymous dimension binder so outer dimension references
+are preserved. `path` uses expected-type-directed checking and lowers to `PLam`;
+`@` lowers to `PApp`. Dimensions have their own lexical scope and are never term
+variables. No kernel semantics are added.
 
-Transport and composition should likewise gain readable interfaces without
-forcing low-level dimension syntax into ordinary functional code.
+Precedence is postfix `@`, then application, then non-associative `==`, then
+right-associative `->`. For example, `f x == g y` compares two applications;
+`f p @ i` means `f (p @ i)`. Use `(f x) @ i` to apply a dimension to a function
+result. Chained equalities require parentheses.
+
+General path-abstraction inference, explicit dimension-dependent path families,
+and readable surface syntax for `coe`, `com`, face formulas/systems, and Glue
+remain future work. Only endpoints and bound names are dimensions: there is no
+surface or core interval meet, join, or reversal. Higher inductive constructors
+are also outside this slice.
 
 ### Higher inductive types
 
@@ -163,7 +174,7 @@ The next architectural tests are therefore:
 broader dependent pattern matching
         |
         v
-ergonomic cubical surface syntax
+further cubical surface syntax
         |
         v
 boundary-aware higher inductive types

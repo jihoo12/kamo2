@@ -53,7 +53,26 @@ pub enum Pattern {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dimension {
+    Zero,
+    One,
+    Name(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    Equality {
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    PathLambda {
+        dimension: String,
+        body: Box<Expr>,
+    },
+    PathApply {
+        path: Box<Expr>,
+        dimension: Dimension,
+    },
     Name(String),
     Universe(u32),
     Bool,

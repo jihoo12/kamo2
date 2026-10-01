@@ -1,5 +1,6 @@
 use super::ast::{
-    ConstructorDeclaration, DataDeclaration, Declaration, Expr, Item, MatchBranch, Pattern, Program,
+    ConstructorDeclaration, DataDeclaration, Declaration, Dimension, Expr, Item, MatchBranch,
+    Pattern, Program,
 };
 use crate::{Error, Result};
 
@@ -12,6 +13,8 @@ enum TokenKind {
     RBrace,
     Colon,
     Eq,
+    EqualEqual,
+    At,
     Arrow,
     FatArrow,
     Backslash,
@@ -50,12 +53,14 @@ fn lex(source: &str) -> Result<Vec<Token>> {
             b';' => (TokenKind::Semicolon, 1),
             b'-' if bytes.get(i + 1) == Some(&b'>') => (TokenKind::Arrow, 2),
             b'=' if bytes.get(i + 1) == Some(&b'>') => (TokenKind::FatArrow, 2),
+            b'=' if bytes.get(i + 1) == Some(&b'=') => (TokenKind::EqualEqual, 2),
+            b'@' => (TokenKind::At, 1),
             b'=' => (TokenKind::Eq, 1),
             _ => {
                 let start = i;
                 while !(i >= bytes.len()
                     || bytes[i].is_ascii_whitespace()
-                    || b"(){}:=\\;".contains(&bytes[i])
+                    || b"(){}:=@\\;".contains(&bytes[i])
                     || bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
                 {
                     i += 1;
@@ -254,6 +259,21 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr> {
+        if self.peek_name("path") {
+            self.index += 1;
+            let dimension = self.dimension()?;
+            let Dimension::Name(dimension) = dimension else {
+                return Err(Error::at(
+                    self.offset(),
+                    "path binder must be a dimension name",
+                ));
+            };
+            self.expect(TokenKind::FatArrow, "expected '=>' after path dimension")?;
+            return Ok(Expr::PathLambda {
+                dimension,
+                body: Box::new(self.expr()?),
+            });
+        }
         if self.eat(&TokenKind::Backslash) {
             let parameter = self.name()?;
             self.expect(TokenKind::FatArrow, "expected '=>' after lambda parameter")?;
@@ -311,7 +331,7 @@ impl Parser {
     }
 
     fn arrow(&mut self) -> Result<Expr> {
-        let left = self.application()?;
+        let left = self.equality()?;
         if self.eat(&TokenKind::Arrow) {
             Ok(Expr::Pi {
                 parameter: None,
@@ -323,10 +343,65 @@ impl Parser {
         }
     }
 
-    fn application(&mut self) -> Result<Expr> {
+    // Precedence (tightest first): postfix @, application, non-associative
+    // equality, right-associative arrow. Lambda/path bodies extend to the right.
+    fn equality(&mut self) -> Result<Expr> {
+        let left = self.application()?;
+        if !self.eat(&TokenKind::EqualEqual) {
+            return Ok(left);
+        }
+        let right = self.application()?;
+        if self.eat(&TokenKind::EqualEqual) {
+            return Err(Error::at(
+                self.offset(),
+                "parenthesize chained path equalities",
+            ));
+        }
+        Ok(Expr::Equality {
+            left: Box::new(left),
+            right: Box::new(right),
+        })
+    }
+
+    fn dimension(&mut self) -> Result<Dimension> {
+        let offset = self.offset();
+        let name = self
+            .name()
+            .map_err(|_| Error::at(offset, "expected dimension 0, 1, or a name"))?;
+        match name.as_str() {
+            "0" => Ok(Dimension::Zero),
+            "1" => Ok(Dimension::One),
+            _ if name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !matches!(
+                    name.as_str(),
+                    "path" | "def" | "let" | "match" | "data" | "where" | "module" | "import"
+                ) =>
+            {
+                Ok(Dimension::Name(name))
+            }
+            _ => Err(Error::at(offset, "expected dimension 0, 1, or a name")),
+        }
+    }
+
+    fn postfix(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?;
+        while self.eat(&TokenKind::At) {
+            expr = Expr::PathApply {
+                path: Box::new(expr),
+                dimension: self.dimension()?,
+            };
+        }
+        Ok(expr)
+    }
+
+    fn application(&mut self) -> Result<Expr> {
+        let mut expr = self.postfix()?;
         while self.starts_atom() {
-            let argument = self.atom()?;
+            let argument = self.postfix()?;
             expr = Expr::Apply {
                 function: Box::new(expr),
                 argument: Box::new(argument),
@@ -340,7 +415,7 @@ impl Parser {
             Some(TokenKind::LParen) => true,
             Some(TokenKind::Name(name)) => !matches!(
                 name.as_str(),
-                "def" | "data" | "module" | "import" | "where" | "let"
+                "def" | "data" | "module" | "import" | "where" | "let" | "path"
             ),
             _ => false,
         }
@@ -369,6 +444,12 @@ impl Parser {
 
         let offset = self.offset();
         let name = self.name()?;
+        if name == "path" {
+            return Err(Error::at(
+                offset,
+                "parenthesize a path abstraction in an application",
+            ));
+        }
         Ok(match name.as_str() {
             "Type" => Expr::Universe(0),
             _ if name.starts_with("Type") && name.len() > 4 => {
@@ -412,4 +493,132 @@ fn split_constructor(mut ty: Expr) -> (Vec<(String, Expr)>, Expr) {
         ty = *codomain;
     }
     (arguments, ty)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+
+    fn expression(source: &str) -> Expr {
+        let mut parser = Parser {
+            tokens: lex(source).unwrap(),
+            index: 0,
+        };
+        let expr = parser.expr().unwrap();
+        assert_eq!(parser.index, parser.tokens.len());
+        expr
+    }
+
+    fn name(n: &str) -> Expr {
+        Expr::Name(n.to_owned())
+    }
+
+    fn apply(f: Expr, x: Expr) -> Expr {
+        Expr::Apply {
+            function: Box::new(f),
+            argument: Box::new(x),
+        }
+    }
+
+    fn at(p: Expr, dimension: Dimension) -> Expr {
+        Expr::PathApply {
+            path: Box::new(p),
+            dimension,
+        }
+    }
+
+    #[test]
+    fn equality_tokens_and_application_precedence() {
+        assert_eq!(
+            expression("f x==g y"),
+            Expr::Equality {
+                left: Box::new(apply(name("f"), name("x"))),
+                right: Box::new(apply(name("g"), name("y"))),
+            }
+        );
+        assert_eq!(
+            expression("x == y"),
+            Expr::Equality {
+                left: Box::new(name("x")),
+                right: Box::new(name("y")),
+            }
+        );
+        let tokens = lex("x==y=z@0")
+            .unwrap()
+            .into_iter()
+            .map(|t| t.kind)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tokens,
+            vec![
+                TokenKind::Name("x".into()),
+                TokenKind::EqualEqual,
+                TokenKind::Name("y".into()),
+                TokenKind::Eq,
+                TokenKind::Name("z".into()),
+                TokenKind::At,
+                TokenKind::Name("0".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn path_application_is_postfix_and_dimensions_are_explicit() {
+        let pi = at(name("p"), Dimension::Name("i".into()));
+        assert_eq!(expression("p @ i"), pi);
+        assert_eq!(expression("f (p @ i)"), apply(name("f"), pi.clone()));
+        assert_eq!(expression("f p@i"), apply(name("f"), pi));
+        assert_eq!(
+            expression("(f x)@0@1"),
+            at(
+                at(apply(name("f"), name("x")), Dimension::Zero),
+                Dimension::One
+            )
+        );
+        assert_eq!(
+            expression("path i => p@i"),
+            Expr::PathLambda {
+                dimension: "i".into(),
+                body: Box::new(at(name("p"), Dimension::Name("i".into()))),
+            }
+        );
+    }
+
+    #[test]
+    fn equality_binds_more_tightly_than_arrow() {
+        assert_eq!(
+            expression("x == y -> z == w"),
+            Expr::Pi {
+                parameter: None,
+                domain: Box::new(Expr::Equality {
+                    left: Box::new(name("x")),
+                    right: Box::new(name("y"))
+                }),
+                codomain: Box::new(Expr::Equality {
+                    left: Box::new(name("z")),
+                    right: Box::new(name("w"))
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn invalid_dimensions_and_chained_equalities_are_rejected() {
+        for source in [
+            "p @ 2",
+            "p @ (i)",
+            "p @ i-j",
+            "p @",
+            "path 0 => x",
+            "path 1 => x",
+            "path => x",
+            "x == y == z",
+        ] {
+            let mut parser = Parser {
+                tokens: lex(source).unwrap(),
+                index: 0,
+            };
+            assert!(parser.expr().is_err(), "{source}");
+        }
+    }
 }

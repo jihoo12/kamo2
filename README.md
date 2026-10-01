@@ -18,8 +18,9 @@ or future roadmaps where they go beyond the current implementation.
 > `let` expressions, exhaustive constructor matching, and structural recursion.
 > Surface `data` declarations, file modules, and ordinary pattern matching are
 > available, including expected-type-directed dependent constructor refinement
-> for ordinary indexed families. Cubical surface syntax and higher inductive
-> types remain roadmap work.
+> for ordinary indexed families. Homogeneous path equality (`==`), path
+> abstractions, and path application are available; transport/composition surface
+> syntax and higher inductive types remain roadmap work.
 
 ## Direction
 
@@ -74,21 +75,37 @@ data Vec (A : Type) : Nat -> Type where
   cons : (n : Nat) -> A -> Vec A n -> Vec A (suc n)
 ```
 
-Cubical equality is intended to be path equality rather than a second,
-unrelated equality type:
+Surface equality is homogeneous cubical path equality, using the existing
+checked core paths:
 
 ```text
-def refl (x : A) : x == x =
+def refl (A : Type) (x : A) : x == x =
   path i => x
 
-def cong (f : A -> B) (p : x == y) : f x == f y =
+def cong (A : Type) (B : Type) (f : A -> B)
+  (x : A) (y : A) (p : x == y) : f x == f y =
   path i => f (p @ i)
 ```
 
 The parser accepts typed `def` declarations, parameters, function types,
 lambdas, application, `let`, `data`, `module`, and `import`. `Bool`, `Nat`, and
 `Vec` are now ordinary declarations in `std/prelude.kamo`, not special surface
-syntax. Cubical path syntax remains future work.
+syntax. Path notation additionally supports `x == y`, `path i => t`, and
+`p @ i` (also `p @ 0` and `p @ 1`). Equality infers its family from the left
+endpoint and the kernel checks both endpoints against that constant family.
+Path abstractions use expected types; general path-abstraction inference and
+explicit dimension-dependent path families are not surface features yet.
+
+Precedence, from tightest to loosest, is postfix `@`, ordinary application,
+non-associative `==`, then right-associative `->`. Thus `f x == g y` compares
+applications, `f p @ i` means `f (p @ i)`, and `(f x) @ i` applies a dimension to
+the result of `f x`. Parenthesize chained equalities and abstractions used as
+arguments. Dimension names use letters/digits/underscores, starting with a letter
+or underscore; dimensions are separate from term variables and shadow lexically.
+Only `0`, `1`, and bound dimension names are accepted as dimensions.
+
+Readable surface syntax for `coe`, `com`, face systems, and Glue remains future
+work. There is no surface or core interval meet, join, or reversal.
 
 ## Current implementation
 
@@ -115,6 +132,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - typed definitions and parameters;
 - dependent and non-dependent function types, lambdas, and application;
 - `let` expressions;
+- homogeneous path equality, path abstraction, and dimension application;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - expected-type-directed matches, including dependent constructor refinement
@@ -130,7 +148,7 @@ not accepted.
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
 to the importing module. Nested patterns, general match-result inference,
-cubical surface syntax, and higher inductive types are not implemented.
+transport/composition/Glue surface syntax, and higher inductive types are not implemented.
 
 ## Universes
 
@@ -308,12 +326,13 @@ Completed foundations:
 - [x] conservative generic ordinary-inductive composition;
 - [x] surface `data` declarations for ordinary and indexed families;
 - [x] non-dependent pattern matching and structural recursion lowering;
-- [x] expected-type-directed dependent constructor refinement for ordinary indexed families.
+- [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
+- [x] homogeneous cubical surface paths (`==`, `path`, `@`).
 
 Next milestones:
 
 - [ ] broader dependent pattern matching (index equations and nested patterns);
-- [ ] cubical surface syntax;
+- [ ] further cubical surface syntax (transport, composition, faces, and Glue);
 - [ ] higher inductive types, beginning with `Circle`.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate

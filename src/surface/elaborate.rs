@@ -1,6 +1,8 @@
-use super::ast::{DataDeclaration, Declaration, Expr, Item, Pattern, Program as SurfaceProgram};
+use super::ast::{
+    DataDeclaration, Declaration, Dimension, Expr, Item, Pattern, Program as SurfaceProgram,
+};
 use crate::arena::Key;
-use crate::syntax::{ConstructorId, Program, Term, TermId};
+use crate::syntax::{ConstructorId, D, Program, Term, TermId};
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 
@@ -23,6 +25,7 @@ struct Elaborator {
     globals: HashMap<String, usize>,
     global_types: HashMap<String, Expr>,
     locals: Vec<(String, Expr)>,
+    dims: Vec<String>,
     fresh: usize,
     current_definition: Option<String>,
     recursive_calls: HashMap<String, (String, Vec<Expr>)>,
@@ -434,6 +437,35 @@ impl Elaborator {
         ))
     }
 
+    fn dimension(&self, dimension: &Dimension) -> Result<D> {
+        match dimension {
+            Dimension::Zero => Ok(D::Zero),
+            Dimension::One => Ok(D::One),
+            Dimension::Name(name) => self
+                .dims
+                .iter()
+                .rev()
+                .position(|n| n == name)
+                .map(D::Bound)
+                .ok_or_else(|| Error::plain(format!("unknown dimension '{name}'"))),
+        }
+    }
+
+    fn surface_dimension(&self, dimension: D) -> Result<Dimension> {
+        match dimension {
+            D::Zero => Ok(Dimension::Zero),
+            D::One => Ok(Dimension::One),
+            D::Bound(index) => self
+                .dims
+                .iter()
+                .rev()
+                .nth(index)
+                .cloned()
+                .map(Dimension::Name)
+                .ok_or_else(|| Error::plain("escaped dimension in surface type")),
+        }
+    }
+
     fn term(&mut self, expr: &Expr) -> Result<TermId> {
         self.term_expected(expr, None)
     }
@@ -467,6 +499,38 @@ impl Elaborator {
                 } else {
                     return Err(Error::plain(format!("unknown name '{name}'")));
                 }
+            }
+            Expr::Equality { left, right } => {
+                let family = self.infer(left)?;
+                let left = self.term_expected(left, Some(&family))?;
+                let right = self.term_expected(right, Some(&family))?;
+                // Path's family has one extra dimension binder; endpoints do not.
+                // Re-lower under that scope rather than reusing an unshifted term.
+                let anonymous = self.fresh_name();
+                self.dims.push(anonymous);
+                let family = self.term(&family);
+                self.dims.pop();
+                Term::Path(family?, left, right)
+            }
+            Expr::PathLambda { dimension, body } => {
+                let body_expected = match expected {
+                    Some(Expr::Equality { left, .. }) => Some(self.infer(left)?),
+                    _ => None,
+                };
+                // Canonicalize the bound dimension before storing local types.
+                // A later path binder with the same source name must not capture
+                // references to this dimension in those types or expectations.
+                let fresh = self.fresh_name();
+                let mut body = (**body).clone();
+                rename_dimension(&mut body, dimension, &fresh);
+                self.dims.push(fresh);
+                let body = self.term_expected(&body, body_expected.as_ref());
+                self.dims.pop();
+                Term::PLam(body?)
+            }
+            Expr::PathApply { path, dimension } => {
+                let dimension = self.dimension(dimension)?;
+                Term::PApp(self.term(path)?, dimension)
             }
             Expr::Universe(level) => Term::U(*level),
             Expr::Bool => Term::Bool,
@@ -617,6 +681,25 @@ impl Elaborator {
             Term::Constructor(id) => {
                 Ok(Expr::Name(self.core.constructors[id.index()].name.clone()))
             }
+            // Only homogeneous equality is emitted by this surface layer.
+            Term::Path(_, left, right) => Ok(Expr::Equality {
+                left: Box::new(self.surface_expr_in(left, env)?),
+                right: Box::new(self.surface_expr_in(right, env)?),
+            }),
+            Term::PApp(path, dimension) => Ok(Expr::PathApply {
+                path: Box::new(self.surface_expr_in(path, env)?),
+                dimension: self.surface_dimension(dimension)?,
+            }),
+            Term::PLam(body) => {
+                let dimension = self.fresh_name();
+                self.dims.push(dimension.clone());
+                let body = self.surface_expr_in(body, env);
+                self.dims.pop();
+                Ok(Expr::PathLambda {
+                    dimension,
+                    body: Box::new(body?),
+                })
+            }
             Term::App(function, argument) => {
                 // Surface lets lower to an annotated lambda application.
                 if let Term::Ann(lambda, _) = self.core.terms.get(function).term
@@ -715,7 +798,7 @@ impl Elaborator {
         Ok(Some(ih.clone()))
     }
 
-    fn infer(&self, expr: &Expr) -> Result<Expr> {
+    fn infer(&mut self, expr: &Expr) -> Result<Expr> {
         if let Some(ih) = self.recursive_ih(expr)? {
             return self.infer(&Expr::Name(ih));
         }
@@ -729,6 +812,22 @@ impl Elaborator {
                 .or_else(|| self.global_types.get(name).cloned())
                 .map(Ok)
                 .unwrap_or_else(|| self.infer_metadata_name(name)),
+            Expr::Equality { left, .. } => {
+                let family = self.infer(left)?;
+                self.infer(&family)
+            }
+            Expr::PathApply { path, dimension } => {
+                self.dimension(dimension)?;
+                match self.infer(path)? {
+                    Expr::Equality { left, .. } => self.infer(&left),
+                    _ => Err(Error::plain(
+                        "path application expects a known homogeneous path type",
+                    )),
+                }
+            }
+            Expr::PathLambda { .. } => Err(Error::plain(
+                "cannot infer a surface path abstraction; provide an expected path type",
+            )),
             Expr::Universe(level) => level
                 .checked_add(1)
                 .map(Expr::Universe)
@@ -751,18 +850,10 @@ impl Elaborator {
             },
             Expr::Let { name, value, body } => {
                 let value_ty = self.infer(value)?;
-                let mut locals = self.locals.clone();
-                locals.push((name.clone(), value_ty));
-                let nested = Elaborator {
-                    fresh: self.fresh,
-                    core: Program::default(),
-                    globals: self.globals.clone(),
-                    global_types: self.global_types.clone(),
-                    locals,
-                    current_definition: self.current_definition.clone(),
-                    recursive_calls: self.recursive_calls.clone(),
-                };
-                nested.infer(body)
+                self.locals.push((name.clone(), value_ty));
+                let ty = self.infer(body);
+                self.locals.pop();
+                Ok(substitute(&ty?, name, value))
             }
             Expr::Pi {
                 parameter,
@@ -770,21 +861,15 @@ impl Elaborator {
                 codomain,
             } => {
                 let domain_level = universe_level(&self.infer(domain)?)?;
-                let mut locals = self.locals.clone();
-                locals.push((
+                self.locals.push((
                     parameter.clone().unwrap_or_else(|| "_".to_owned()),
                     (**domain).clone(),
                 ));
-                let nested = Elaborator {
-                    fresh: self.fresh,
-                    core: Program::default(),
-                    globals: self.globals.clone(),
-                    global_types: self.global_types.clone(),
-                    locals,
-                    current_definition: self.current_definition.clone(),
-                    recursive_calls: self.recursive_calls.clone(),
-                };
-                let codomain_level = universe_level(&nested.infer(codomain)?)?;
+                // Retain the same metadata and dimension scope while extending
+                // only the term context, rather than constructing a blank core.
+                let codomain_ty = self.infer(codomain);
+                self.locals.pop();
+                let codomain_level = universe_level(&codomain_ty?)?;
                 Ok(Expr::Universe(domain_level.max(codomain_level)))
             }
             Expr::Lambda { .. } => Err(Error::plain(
@@ -850,9 +935,83 @@ fn universe_level(expr: &Expr) -> Result<u32> {
     }
 }
 
+// Rename only dimension occurrences bound by the surrounding path abstraction;
+// term binders and names inhabit a separate namespace.
+fn rename_dimension(expr: &mut Expr, old: &str, new: &str) {
+    match expr {
+        Expr::PathApply { path, dimension } => {
+            rename_dimension(path, old, new);
+            if matches!(dimension, Dimension::Name(name) if name == old) {
+                *dimension = Dimension::Name(new.to_owned());
+            }
+        }
+        Expr::PathLambda { dimension, body } => {
+            if dimension != old {
+                rename_dimension(body, old, new);
+            }
+        }
+        Expr::Equality { left, right } => {
+            rename_dimension(left, old, new);
+            rename_dimension(right, old, new);
+        }
+        Expr::Pi {
+            domain, codomain, ..
+        } => {
+            rename_dimension(domain, old, new);
+            rename_dimension(codomain, old, new);
+        }
+        Expr::Lambda { body, .. } | Expr::Suc(body) => rename_dimension(body, old, new),
+        Expr::Apply { function, argument } => {
+            rename_dimension(function, old, new);
+            rename_dimension(argument, old, new);
+        }
+        Expr::Let { value, body, .. } => {
+            rename_dimension(value, old, new);
+            rename_dimension(body, old, new);
+        }
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            rename_dimension(condition, old, new);
+            rename_dimension(then_branch, old, new);
+            rename_dimension(else_branch, old, new);
+        }
+        Expr::Match {
+            scrutinee,
+            branches,
+        } => {
+            rename_dimension(scrutinee, old, new);
+            for branch in branches {
+                rename_dimension(&mut branch.body, old, new);
+            }
+        }
+        Expr::Name(_)
+        | Expr::Universe(_)
+        | Expr::Bool
+        | Expr::True
+        | Expr::False
+        | Expr::Nat
+        | Expr::Zero => {}
+    }
+}
+
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
         Expr::Name(current) if current == name => replacement.clone(),
+        Expr::Equality { left, right } => Expr::Equality {
+            left: Box::new(substitute(left, name, replacement)),
+            right: Box::new(substitute(right, name, replacement)),
+        },
+        Expr::PathLambda { dimension, body } => Expr::PathLambda {
+            dimension: dimension.clone(),
+            body: Box::new(substitute(body, name, replacement)),
+        },
+        Expr::PathApply { path, dimension } => Expr::PathApply {
+            path: Box::new(substitute(path, name, replacement)),
+            dimension: dimension.clone(),
+        },
         Expr::Pi {
             parameter,
             domain,
