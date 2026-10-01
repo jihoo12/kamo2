@@ -8,6 +8,10 @@ cubical kernel is the starting point. Kamo2 keeps that cubical foundation while
 developing a functional surface language, user-defined inductive families, and
 eventually higher inductive types.
 
+This README and [docs/rules.md](docs/rules.md) describe the implemented core and
+its trust boundary. Other design documents are explicitly labeled as proposals
+or future roadmaps where they go beyond the current implementation.
+
 > Kamo2 is experimental. The command-line tool still uses the explicit
 > S-expression core language by default. A functional surface parser and elaborator
 > are available through the library API, including typed definitions, functions,
@@ -128,8 +132,7 @@ and higher inductive types are not implemented.
 
 ## Universes
 
-The inherited implementation currently has explicit **non-cumulative**
-universes. Kamo2's design direction is explicit **cumulative** universes:
+The checker currently has explicit **cumulative** universes:
 
 ```text
 U i : U (i + 1)
@@ -139,9 +142,8 @@ A : U i    i <= j
 A : U j
 ```
 
-Different universes will not become definitionally equal. Cumulativity is
-planned as a separate checking/compatibility relation, without a runtime
-`Lift` term.
+Different universes are not definitionally equal. Cumulativity is implemented
+as a separate checking/compatibility relation, without a runtime `Lift` term.
 
 For dependent function and pair formation, the intended principal level is:
 
@@ -155,16 +157,15 @@ Universe polymorphism and level inference are later work. See
 
 ## Inductive families
 
-General inductive families are planned as checked core metadata rather than
+General inductive families are represented as checked core metadata rather than
 being hidden entirely behind an encoding.
 
-The current design separates:
+The current implementation includes:
 
 1. checked inductive/constructor metadata;
 2. generic family and constructor values;
 3. dependent eliminators and iota computation;
-4. surface `data` elaboration;
-5. cubical composition for the supported inductive fragment.
+4. surface `data` elaboration and ordinary constructor matching.
 
 The core primitives remain for compatibility with the S-expression language,
 but surface `Nat`, `Bool`, and `Vec` use the same generic inductive-family
@@ -209,7 +210,7 @@ comment.
 
 | Form | Meaning |
 | --- | --- |
-| `(U level)` | Universe; currently non-cumulative in the implementation |
+| `(U level)` | Universe; checking is cumulative, while distinct universe levels remain definitionally unequal |
 | `(Pi x A B)`, `(lam x body)`, `(app f x)` | Dependent function, introduction, application |
 | `(Sigma x A B)`, `(pair a b)`, `(fst p)`, `(snd p)` | Dependent pair and projections |
 | `Bool`, `true`, `false` | Primitive Booleans |
@@ -225,9 +226,13 @@ comment.
 | `(unglue G value)` | Glue projection |
 
 Dimensions are `0`, `1`, or bound interval names. Faces are `top`,
-`bottom`, `(= r s)`, `(and phi psi)`, or `(or phi psi)`.
+`bottom`, `(= r s)`, `(and phi psi)`, or `(or phi psi)`. The `and` and
+`or` forms combine **face/cofibration formulas**; they are not interval
+connections. Core interval expressions have no meet, join, or reversal
+operation.
 
-See [rule correspondence](docs/rules.md) for the current core theory and
+See [rule correspondence](docs/rules.md) for the current Cartesian cubical
+theory, the distinction from De Morgan/CCHM interval structure, and the
 implementation boundary.
 
 ## Build and run
