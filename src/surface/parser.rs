@@ -1,4 +1,6 @@
-use super::ast::{Declaration, Expr, MatchBranch, Pattern, Program};
+use super::ast::{
+    ConstructorDeclaration, DataDeclaration, Declaration, Expr, Item, MatchBranch, Pattern, Program,
+};
 use crate::{Error, Result};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,16 +130,91 @@ impl Parser {
     }
 
     fn program(&mut self) -> Result<Program> {
-        let mut declarations = Vec::new();
-        while self.index < self.tokens.len() {
-            if !self.peek_name("def") {
-                return Err(Error::at(self.offset(), "expected 'def'"));
-            }
+        let module = if self.peek_name("module") {
             self.index += 1;
-            declarations.push(self.declaration()?);
+            let name = self.name()?;
+            self.eat(&TokenKind::Semicolon);
+            Some(name)
+        } else {
+            None
+        };
+        let mut imports = Vec::new();
+        while self.peek_name("import") {
+            self.index += 1;
+            imports.push(self.name()?);
             self.eat(&TokenKind::Semicolon);
         }
-        Ok(Program { declarations })
+        let mut declarations = Vec::new();
+        while self.index < self.tokens.len() {
+            if self.peek_name("def") {
+                self.index += 1;
+                declarations.push(Item::Definition(self.declaration()?));
+            } else if self.peek_name("data") {
+                self.index += 1;
+                declarations.push(Item::Data(self.data_declaration()?));
+            } else {
+                return Err(Error::at(self.offset(), "expected 'def' or 'data'"));
+            }
+            self.eat(&TokenKind::Semicolon);
+        }
+        Ok(Program {
+            module,
+            imports,
+            declarations,
+        })
+    }
+
+    fn binder(&mut self) -> Result<(String, Expr)> {
+        self.expect(TokenKind::LParen, "expected '('")?;
+        let name = self.name()?;
+        self.expect(TokenKind::Colon, "expected ':' in binder")?;
+        let ty = self.expr()?;
+        self.expect(TokenKind::RParen, "expected ')' after binder")?;
+        Ok((name, ty))
+    }
+
+    fn data_declaration(&mut self) -> Result<DataDeclaration> {
+        let name = self.name()?;
+        let mut parameters = Vec::new();
+        while matches!(
+            self.tokens.get(self.index).map(|t| &t.kind),
+            Some(TokenKind::LParen)
+        ) {
+            parameters.push(self.binder()?);
+        }
+        self.expect(TokenKind::Colon, "expected ':' after data header")?;
+        let kind = self.expr()?;
+        let (indices, universe) = split_kind(kind)?;
+        if !self.peek_name("where") {
+            return Err(Error::at(self.offset(), "expected 'where'"));
+        }
+        self.index += 1;
+        self.expect(TokenKind::LBrace, "expected '{' after 'where'")?;
+        let mut constructors = Vec::new();
+        while !self.eat(&TokenKind::RBrace) {
+            let constructor_name = self.name()?;
+            self.expect(TokenKind::Colon, "expected ':' after constructor name")?;
+            let ty = self.expr()?;
+            let (arguments, result) = split_constructor(ty);
+            constructors.push(ConstructorDeclaration {
+                name: constructor_name,
+                arguments,
+                result,
+            });
+            if !matches!(
+                self.tokens.get(self.index).map(|token| &token.kind),
+                Some(TokenKind::RBrace)
+            ) {
+                self.expect(TokenKind::Semicolon, "expected ';' between constructors")?;
+            }
+        }
+        Ok(DataDeclaration {
+            name,
+            parameters,
+            indices,
+            universe,
+            constructors,
+        })
     }
 
     fn declaration(&mut self) -> Result<Declaration> {
@@ -261,7 +338,10 @@ impl Parser {
     fn starts_atom(&self) -> bool {
         match self.tokens.get(self.index).map(|t| &t.kind) {
             Some(TokenKind::LParen) => true,
-            Some(TokenKind::Name(name)) => !matches!(name.as_str(), "def" | "let"),
+            Some(TokenKind::Name(name)) => !matches!(
+                name.as_str(),
+                "def" | "data" | "module" | "import" | "where" | "let"
+            ),
             _ => false,
         }
     }
@@ -291,12 +371,6 @@ impl Parser {
         let name = self.name()?;
         Ok(match name.as_str() {
             "Type" => Expr::Universe(0),
-            "Bool" => Expr::Bool,
-            "true" => Expr::True,
-            "false" => Expr::False,
-            "Nat" => Expr::Nat,
-            "zero" => Expr::Zero,
-            "suc" => Expr::Suc(Box::new(self.atom()?)),
             _ if name.starts_with("Type") && name.len() > 4 => {
                 let level = name[4..]
                     .parse()
@@ -306,4 +380,42 @@ impl Parser {
             _ => Expr::Name(name),
         })
     }
+}
+
+fn split_kind(mut kind: Expr) -> Result<(Vec<(String, Expr)>, u32)> {
+    let mut indices = Vec::new();
+    loop {
+        match kind {
+            Expr::Universe(level) => return Ok((indices, level)),
+            Expr::Pi {
+                parameter,
+                domain,
+                codomain,
+            } => {
+                indices.push((
+                    parameter.unwrap_or_else(|| format!("_index{}", indices.len())),
+                    *domain,
+                ));
+                kind = *codomain;
+            }
+            _ => return Err(Error::plain("data kind must end in Type")),
+        }
+    }
+}
+
+fn split_constructor(mut ty: Expr) -> (Vec<(String, Expr)>, Expr) {
+    let mut arguments = Vec::new();
+    while let Expr::Pi {
+        parameter,
+        domain,
+        codomain,
+    } = ty
+    {
+        arguments.push((
+            parameter.unwrap_or_else(|| format!("_arg{}", arguments.len())),
+            *domain,
+        ));
+        ty = *codomain;
+    }
+    (arguments, ty)
 }

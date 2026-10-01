@@ -9,11 +9,12 @@ developing a functional surface language, user-defined inductive families, and
 eventually higher inductive types.
 
 > Kamo2 is experimental. The command-line tool still uses the explicit
-> S-expression core language. A minimal functional surface parser and elaborator
+> S-expression core language by default. A functional surface parser and elaborator
 > are available through the library API, including typed definitions, functions,
 > `let` expressions, exhaustive constructor matching, and structural recursion.
-> Surface `data` declarations, dependent pattern matching, cubical surface
-> syntax, and higher inductive types remain roadmap work.
+> Surface `data` declarations, file modules, and ordinary pattern matching are
+> available; dependent matching, cubical surface syntax, and higher inductive
+> types remain roadmap work.
 
 ## Direction
 
@@ -79,11 +80,10 @@ def cong (f : A -> B) (p : x == y) : f x == f y =
   path i => f (p @ i)
 ```
 
-The current parser accepts typed `def` declarations, parameters, function
-types, lambdas, application, `let` expressions, and the primitive `Bool` and
-`Nat` names. The `Vec` declaration and cubical path examples above still
-describe target syntax: the surface parser does not yet accept `data`
-declarations or cubical path syntax.
+The parser accepts typed `def` declarations, parameters, function types,
+lambdas, application, `let`, `data`, `module`, and `import`. `Bool`, `Nat`, and
+`Vec` are now ordinary declarations in `std/prelude.kamo`, not special surface
+syntax. Cubical path syntax remains future work.
 
 ## Current implementation
 
@@ -108,6 +108,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - typed definitions and parameters;
 - dependent and non-dependent function types, lambdas, and application;
 - `let` expressions;
+- surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - non-dependent matches lowered to the core dependent eliminator;
 - structural recursive calls lowered to the corresponding eliminator
@@ -118,11 +119,10 @@ are checked during elaboration. Structural recursion is restricted to calls
 recognized through recursive constructor arguments; unrestricted recursion is
 not accepted.
 
-The surface parser cannot yet declare inductive families itself. Current tests
-exercise matching and recursion by elaborating surface definitions against
-inductive metadata already registered in the core. The CLI also has no surface
-mode yet. Surface `data` declarations, dependent pattern matching, cubical
-surface syntax, and higher inductive types are not implemented.
+The `check-surface` and `normalize-surface` CLI modes load transitive file
+imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
+to the importing module. Dependent pattern matching, cubical surface syntax,
+and higher inductive types are not implemented.
 
 ## Universes
 
@@ -164,13 +164,14 @@ The current design separates:
 4. surface `data` elaboration;
 5. cubical composition for the supported inductive fragment.
 
-Primitive `Nat` and `Bool` will remain during this transition so the generic
-implementation can be tested against the existing behavior.
+The core primitives remain for compatibility with the S-expression language,
+but surface `Nat`, `Bool`, and `Vec` use the same generic inductive-family
+metadata, eliminator, and iota computation as user declarations.
 
 Non-dependent surface pattern matching now elaborates to the existing
 dependent eliminators rather than adding a separate evaluator mechanism.
 Structural recursive calls are lowered to eliminator hypotheses. Surface
-`data` declarations and dependent pattern matching remain future work.
+dependent pattern matching remains future work.
 
 ## Higher inductive types
 

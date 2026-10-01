@@ -1,4 +1,4 @@
-use super::ast::{Declaration, Expr, Pattern, Program as SurfaceProgram};
+use super::ast::{DataDeclaration, Declaration, Expr, Item, Pattern, Program as SurfaceProgram};
 use crate::arena::Key;
 use crate::syntax::{ConstructorId, Program, Term, TermId};
 use crate::{Error, Result};
@@ -143,16 +143,111 @@ impl Elaborator {
     }
 
     fn program(mut self, surface: &SurfaceProgram) -> Result<Program> {
-        for declaration in &surface.declarations {
-            self.declaration(declaration)?;
+        for item in &surface.declarations {
+            match item {
+                Item::Definition(declaration) => self.declaration(declaration)?,
+                Item::Data(declaration) => self.data_declaration(declaration)?,
+            }
         }
         Ok(self.core)
     }
 
-    fn declaration(&mut self, declaration: &Declaration) -> Result<()> {
-        if self.globals.contains_key(&declaration.name)
-            || ["Bool", "Nat", "true", "false", "zero"].contains(&declaration.name.as_str())
+    fn data_declaration(&mut self, data: &DataDeclaration) -> Result<()> {
+        if self.globals.contains_key(&data.name)
+            || self
+                .core
+                .inductives
+                .iter()
+                .any(|item| item.name == data.name)
         {
+            return Err(Error::plain(format!(
+                "duplicate declaration '{}'",
+                data.name
+            )));
+        }
+        let saved = self.locals.len();
+        let mut parameters = Vec::new();
+        for (name, ty) in &data.parameters {
+            parameters.push(crate::syntax::TelescopeEntry {
+                name: name.clone(),
+                ty: self.term(ty)?,
+            });
+            self.locals.push((name.clone(), ty.clone()));
+        }
+        let mut indices = Vec::new();
+        for (name, ty) in &data.indices {
+            indices.push(crate::syntax::TelescopeEntry {
+                name: name.clone(),
+                ty: self.term(ty)?,
+            });
+            self.locals.push((name.clone(), ty.clone()));
+        }
+        self.locals.truncate(saved + data.parameters.len());
+        let inductive =
+            self.core
+                .push_inductive(data.name.clone(), data.universe, parameters, indices);
+
+        for constructor in &data.constructors {
+            if self
+                .core
+                .constructors
+                .iter()
+                .any(|item| item.name == constructor.name)
+            {
+                self.locals.truncate(saved);
+                return Err(Error::plain(format!(
+                    "duplicate constructor '{}'",
+                    constructor.name
+                )));
+            }
+            let mut arguments = Vec::new();
+            let mut recursive_arguments = Vec::new();
+            for (position, (name, ty)) in constructor.arguments.iter().enumerate() {
+                if expression_head(ty) == Some(data.name.as_str()) {
+                    recursive_arguments.push(position);
+                }
+                arguments.push(crate::syntax::TelescopeEntry {
+                    name: name.clone(),
+                    ty: self.term(ty)?,
+                });
+                self.locals.push((name.clone(), ty.clone()));
+            }
+            let (head, applied) = application_spine(&constructor.result);
+            if head != data.name || applied.len() != data.parameters.len() + data.indices.len() {
+                self.locals.truncate(saved);
+                return Err(Error::plain(format!(
+                    "constructor '{}' must return '{}' with all parameters and indices",
+                    constructor.name, data.name
+                )));
+            }
+            for ((parameter, _), actual) in data.parameters.iter().zip(&applied) {
+                if actual != &Expr::Name(parameter.clone()) {
+                    self.locals.truncate(saved);
+                    return Err(Error::plain(format!(
+                        "constructor '{}' changes data parameter '{}'",
+                        constructor.name, parameter
+                    )));
+                }
+            }
+            let result_indices = applied[data.parameters.len()..]
+                .iter()
+                .map(|index| self.term(index))
+                .collect::<Result<Vec<_>>>()?;
+            self.core.push_constructor(
+                inductive,
+                constructor.name.clone(),
+                arguments,
+                result_indices,
+                recursive_arguments,
+            );
+            self.locals.truncate(saved + data.parameters.len());
+        }
+        self.locals.truncate(saved);
+        Ok(())
+    }
+
+    fn declaration(&mut self, declaration: &Declaration) -> Result<()> {
+        if self.globals.contains_key(&declaration.name) {
             return Err(Error::plain("duplicate or reserved declaration name"));
         }
         let ty_expr = declaration
@@ -305,6 +400,16 @@ impl Elaborator {
                     Term::Inductive(inductive)
                 } else if let Ok(constructor) = self.resolve_constructor(name) {
                     Term::Constructor(constructor)
+                } else if name == "Bool" {
+                    Term::Bool
+                } else if name == "true" {
+                    Term::True
+                } else if name == "false" {
+                    Term::False
+                } else if name == "Nat" {
+                    Term::Nat
+                } else if name == "zero" {
+                    Term::Zero
                 } else {
                     return Err(Error::plain(format!("unknown name '{name}'")));
                 }
@@ -457,6 +562,12 @@ impl Elaborator {
             }
             return Ok(result);
         }
+        match name {
+            "Bool" | "Nat" => return Ok(Expr::Universe(0)),
+            "true" | "false" => return Ok(Expr::Name("Bool".to_owned())),
+            "zero" => return Ok(Expr::Name("Nat".to_owned())),
+            _ => {}
+        }
         Err(Error::plain(format!("cannot infer type of '{name}'")))
     }
 
@@ -585,6 +696,34 @@ impl Elaborator {
     }
 }
 
+fn application_spine(expr: &Expr) -> (String, Vec<Expr>) {
+    let mut cursor = expr;
+    let mut arguments = Vec::new();
+    while let Expr::Apply { function, argument } = cursor {
+        arguments.push((**argument).clone());
+        cursor = function;
+    }
+    arguments.reverse();
+    (
+        match cursor {
+            Expr::Name(name) => name.clone(),
+            _ => String::new(),
+        },
+        arguments,
+    )
+}
+
+fn expression_head(expr: &Expr) -> Option<&str> {
+    let mut cursor = expr;
+    while let Expr::Apply { function, .. } = cursor {
+        cursor = function;
+    }
+    match cursor {
+        Expr::Name(name) => Some(name),
+        _ => None,
+    }
+}
+
 fn universe_level(expr: &Expr) -> Result<u32> {
     if let Expr::Universe(level) = expr {
         Ok(*level)
@@ -661,7 +800,9 @@ mod pattern_tests {
 
     fn recursive_nat_function(recursive_argument: &str) -> SurfaceProgram {
         SurfaceProgram {
-            declarations: vec![Declaration {
+            module: None,
+            imports: vec![],
+            declarations: vec![Item::Definition(Declaration {
                 name: "f".to_owned(),
                 ty: Some(Expr::Pi {
                     parameter: None,
@@ -693,7 +834,7 @@ mod pattern_tests {
                         ],
                     }),
                 },
-            }],
+            })],
         }
     }
 
@@ -809,7 +950,9 @@ mod pattern_tests {
             argument: Box::new(Expr::Name("n".to_owned())),
         };
         let surface = SurfaceProgram {
-            declarations: vec![Declaration {
+            module: None,
+            imports: vec![],
+            declarations: vec![Item::Definition(Declaration {
                 name: "length".to_owned(),
                 ty: Some(Expr::Pi {
                     parameter: Some("A".to_owned()),
@@ -867,7 +1010,7 @@ mod pattern_tests {
                         }),
                     }),
                 },
-            }],
+            })],
         };
 
         let program = elaborate_into(core, &surface).unwrap();
@@ -1001,7 +1144,9 @@ mod pattern_tests {
             vec![0],
         );
         let surface = SurfaceProgram {
-            declarations: vec![Declaration {
+            module: None,
+            imports: vec![],
+            declarations: vec![Item::Definition(Declaration {
                 name: "f".to_owned(),
                 ty: Some(Expr::Pi {
                     parameter: None,
@@ -1030,7 +1175,7 @@ mod pattern_tests {
                         ],
                     }),
                 },
-            }],
+            })],
         };
         let program = elaborate_into(core, &surface).unwrap();
         let body = program.decls[0].body;

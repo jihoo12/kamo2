@@ -947,8 +947,7 @@ impl<'a> Engine<'a> {
                     scrutinee,
                 } => {
                     let scrutinee = self.force(scrutinee, face)?;
-                    let (head, spine) = self.application_spine(scrutinee);
-                    let head = self.force(head, face)?;
+                    let (head, spine) = self.application_spine_forced(scrutinee, face)?;
                     let Val::Constructor(constructor_id) = self.get(head) else {
                         break;
                     };
@@ -1168,14 +1167,25 @@ impl<'a> Engine<'a> {
         })
     }
 
-    fn application_spine(&self, mut value: ValId) -> (ValId, Vec<ValId>) {
+    fn application_spine_forced(
+        &mut self,
+        mut value: ValId,
+        face: FaceId,
+    ) -> Result<(ValId, Vec<ValId>)> {
         let mut arguments = vec![];
-        while let Val::App(function, argument) = self.get(value) {
-            arguments.push(argument);
-            value = function;
+        loop {
+            value = self.force(value, face)?;
+            match self.get(value) {
+                Val::App(function, argument) => {
+                    arguments.push(argument);
+                    value = function;
+                }
+                _ => {
+                    arguments.reverse();
+                    return Ok((value, arguments));
+                }
+            }
         }
-        arguments.reverse();
-        (value, arguments)
     }
 
     pub(crate) fn inductive_application(

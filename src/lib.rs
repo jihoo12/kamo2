@@ -11,7 +11,9 @@ mod quote;
 pub mod surface;
 mod syntax;
 
+use std::collections::HashSet;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 pub type Result<T> = std::result::Result<T, Error>;
 /// Bounds parser allocation; evaluation has separate work and arena budgets.
@@ -119,9 +121,76 @@ impl CheckedProgram {
         if source.len() > MAX_SOURCE_BYTES {
             return Err(Error::plain("source size budget exceeded (maximum 4 MiB)"));
         }
-        let surface = surface::parser::parse(source)?;
+        let mut surface = surface::parser::parse(include_str!("../std/prelude.kamo"))?;
+        let input = surface::parser::parse(source)?;
+        surface.declarations.extend(input.declarations);
         let program = surface::elaborate(&surface)?;
         Self::check_program(program, options)
+    }
+
+    /// Loads a surface module and its transitive imports. An import `Foo.Bar`
+    /// resolves to `Foo/Bar.kamo` relative to the importing file. Each module
+    /// is elaborated once, before its importer.
+    pub fn check_surface_file(path: impl AsRef<Path>) -> Result<Self> {
+        Self::check_surface_file_with(path, Options::default())
+    }
+
+    pub fn check_surface_file_with(path: impl AsRef<Path>, options: Options) -> Result<Self> {
+        fn visit(
+            path: &Path,
+            seen: &mut HashSet<PathBuf>,
+            active: &mut HashSet<PathBuf>,
+            items: &mut Vec<surface::ast::Item>,
+        ) -> Result<()> {
+            let path = path
+                .canonicalize()
+                .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
+            if seen.contains(&path) {
+                return Ok(());
+            }
+            if !active.insert(path.clone()) {
+                return Err(Error::plain(format!(
+                    "cyclic module import involving '{}'",
+                    path.display()
+                )));
+            }
+            let source = std::fs::read_to_string(&path)
+                .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
+            if source.len() > MAX_SOURCE_BYTES {
+                return Err(Error::plain(format!(
+                    "{}: source size budget exceeded",
+                    path.display()
+                )));
+            }
+            let parsed = surface::parser::parse(&source)?;
+            for import in &parsed.imports {
+                if import == "Prelude" {
+                    continue;
+                }
+                let relative = format!("{}.kamo", import.replace('.', "/"));
+                visit(
+                    &path.parent().unwrap_or(Path::new(".")).join(relative),
+                    seen,
+                    active,
+                    items,
+                )?;
+            }
+            active.remove(&path);
+            seen.insert(path);
+            items.extend(parsed.declarations);
+            Ok(())
+        }
+
+        let mut surface = surface::parser::parse(include_str!("../std/prelude.kamo"))?;
+        let mut seen = HashSet::new();
+        let mut active = HashSet::new();
+        visit(
+            path.as_ref(),
+            &mut seen,
+            &mut active,
+            &mut surface.declarations,
+        )?;
+        Self::check_program(surface::elaborate(&surface)?, options)
     }
 
     fn check_program(program: syntax::Program, options: Options) -> Result<Self> {
