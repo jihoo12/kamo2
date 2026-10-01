@@ -47,7 +47,16 @@ impl Engine<'_> {
                     parameter_values.push(value);
                 }
                 for entry in &constructor.arguments {
-                    self.sort(entry.ty, &constructor_context)?;
+                    let level = self.sort(entry.ty, &constructor_context)?;
+                    if level > family.universe {
+                        return Err(self.error(
+                            entry.ty,
+                            format!(
+                                "constructor field '{}' lives in U {level}, above inductive universe U {}",
+                                entry.name, family.universe
+                            ),
+                        ));
+                    }
                     let ty = self.thunk(entry.ty, constructor_context.env);
                     let (next, _) = self.extend(&constructor_context, ty);
                     constructor_context = next;
