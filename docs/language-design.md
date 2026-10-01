@@ -12,12 +12,14 @@ and cubical equality share one coherent elaboration pipeline.
 
 The current system already has:
 
-- a functional surface syntax;
-- file modules and name resolution;
-- surface `data` declarations;
-- checked indexed-inductive metadata;
+- a functional surface syntax with typed definitions, functions, and `let`;
+- file modules, imports, and name resolution;
+- surface `data` declarations for parameterized and indexed families;
+- checked indexed-inductive metadata with conservative trusted positivity validation;
 - generic dependent eliminators and iota computation;
-- ordinary constructor pattern matching;
+- ordinary constructor pattern matching and structural-recursion lowering;
+- conservative constructor-directed composition for the dimensionwise-constant
+  ordinary-inductive fragment;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -31,8 +33,8 @@ These are current implementation facts, not future milestones.
    unrelated propositional equality primitive.
 4. Extend inductive families only with rules whose positivity, computation, and
    cubical behavior can be stated precisely.
-5. Add higher inductive types only after ordinary inductive composition and
-   dependent elimination have a clear specification.
+5. Add higher inductive types only while preserving the explicit
+   ordinary-inductive composition and dependent-elimination boundary.
 6. Prefer elaboration into a small core over adding convenience features as
    kernel primitives.
 
@@ -68,18 +70,22 @@ between the implementation and the Cartesian cubical rules.
 
 ## Near-term work
 
-### Generic cubical composition for inductive families
+### Preserve the ordinary-inductive boundary
 
-User-defined inductive families already support formation, constructors,
-dependent elimination, and iota computation, but they do not yet have generic
-structural composition.
+Generic constructor-directed composition is now implemented for a deliberately
+conservative ordinary-inductive fragment. It reduces only when constructor
+shape is known and common across the boundary, each generic parameter/index
+line is definitionally constant across the composition, and every constructor
+field is proved constant enough for later dependent fields and result indices.
 
-This is the most important remaining kernel-facing step before claiming that
-ordinary user-defined data has the same cubical stability as the primitive
-`Nat` and `Bool` cases.
+Equal endpoints alone are not sufficient. Genuinely varying or ambiguous
+parameter, index, or dependent-field cases remain neutral `Com` values rather
+than being reconstructed with an unsound fallback.
 
-The rule must account for constructor shape, recursive fields, indices, and
-dependent fields without assuming De Morgan interval operations.
+Near-term kernel work should keep this boundary explicit. Richer dependent
+structural composition or support for nested strictly-positive functors should
+only be added together with precise filler/coherence rules for the Cartesian
+interval structure.
 
 ### Dependent pattern matching
 
@@ -147,9 +153,6 @@ The project should avoid making the trusted core larger merely to obtain:
 The next architectural tests are therefore:
 
 ```text
-generic inductive composition
-        |
-        v
 dependent pattern refinement
         |
         v
@@ -158,6 +161,9 @@ ergonomic cubical surface syntax
         v
 boundary-aware higher inductive types
 ```
+
+The conservative ordinary-inductive composition rule is now part of the
+boundary these later steps must preserve rather than an unimplemented milestone.
 
 The governing constraint is that each step should remain compatible with the
 Cartesian cubical core documented in [rules.md](rules.md).
