@@ -85,7 +85,6 @@ fn inductive_telescopes_are_semantically_checked() {
     assert!(error.message.contains("expected a type"), "{error}");
 }
 
-
 #[test]
 fn constructor_fields_respect_the_declared_inductive_universe() {
     let error =
@@ -125,10 +124,7 @@ fn anonymous_constructor_arrows_do_not_create_source_names() {
 
 #[test]
 fn transitive_import_depth_is_bounded() {
-    let root = std::env::temp_dir().join(format!(
-        "kamo-deep-modules-{}",
-        std::process::id()
-    ));
+    let root = std::env::temp_dir().join(format!("kamo-deep-modules-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
 
@@ -143,7 +139,9 @@ fn transitive_import_depth_is_bounded() {
 
     let error = CheckedProgram::check_surface_file(root.join("M0.kamo")).unwrap_err();
     assert!(
-        error.message.contains("module import depth budget exceeded"),
+        error
+            .message
+            .contains("module import depth budget exceeded"),
         "{error}"
     );
     fs::remove_dir_all(root).unwrap();
