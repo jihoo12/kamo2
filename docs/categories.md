@@ -1,8 +1,18 @@
 # Small categories for Yoneda
 
-`examples/category.kamo` depends on `examples/foundations.kamo`. Concatenate
-the files in that order before checking, as shown in the README. All definitions
-are ordinary checked library terms; there are no new kernel primitives or axioms.
+`examples/category.kamo` depends on `examples/foundations.kamo`. These
+examples use the explicit S-expression core language, so the surface
+`module`/`import` loader does not resolve their dependencies. The integration
+tests concatenate the files programmatically. For a manual check, concatenate
+them in dependency order, for example:
+
+```sh
+cat examples/foundations.kamo examples/category.kamo > /tmp/kamo-category.kamo
+cargo run -- check /tmp/kamo-category.kamo
+```
+
+All definitions are ordinary checked library terms; there are no new kernel
+primitives or axioms.
 
 ## Representation and universes
 
