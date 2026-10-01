@@ -17,7 +17,8 @@ or future roadmaps where they go beyond the current implementation.
 > are available through the library API, including typed definitions, functions,
 > `let` expressions, exhaustive constructor matching, and structural recursion.
 > Surface `data` declarations, file modules, and ordinary pattern matching are
-> available; dependent matching, cubical surface syntax, and higher inductive
+> available, including expected-type-directed dependent constructor refinement
+> for ordinary indexed families. Cubical surface syntax and higher inductive
 > types remain roadmap work.
 
 ## Direction
@@ -46,8 +47,8 @@ higher-dimensional data.
 
 The two main architecture milestones are:
 
-- **Vec:** general indexed inductive families, dependent elimination, and later
-  dependent pattern matching.
+- **Vec:** general indexed inductive families, dependent elimination, and
+  expected-type-directed dependent constructor refinement.
 - **Circle:** higher inductive types with path constructors and cubical
   elimination/coherence.
 
@@ -116,7 +117,8 @@ The library API also exposes `CheckedProgram::check_surface` and
 - `let` expressions;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
-- non-dependent matches lowered to the core dependent eliminator;
+- expected-type-directed matches, including dependent constructor refinement
+  for ordinary indexed families, lowered to the core dependent eliminator;
 - structural recursive calls lowered to the corresponding eliminator
   hypotheses.
 
@@ -127,8 +129,8 @@ not accepted.
 
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
-to the importing module. Dependent pattern matching, cubical surface syntax,
-and higher inductive types are not implemented.
+to the importing module. Nested patterns, general match-result inference,
+cubical surface syntax, and higher inductive types are not implemented.
 
 ## Universes
 
@@ -176,10 +178,17 @@ index lines—not merely their endpoints—must convert to both endpoints, and e
 field composition must be provably constant. Varying or ambiguous cases remain
 neutral rather than applying an unsound fallback.
 
-Non-dependent surface pattern matching now elaborates to the existing
-dependent eliminators rather than adding a separate evaluator mechanism.
-Structural recursive calls are lowered to eliminator hypotheses. Surface
-dependent pattern matching remains future work.
+Expected-type-directed surface matching elaborates to the existing dependent
+eliminator. Distinct local-variable indices and a local-variable scrutinee are
+abstracted from the expected result type. Constructor result indices and values
+instantiate that motive in each branch; recursive arguments receive hypotheses
+at their own indices and values. For example, structural copy of `Vec A n` can
+return `Vec A n`, using the tail hypothesis at its smaller length.
+
+This is a conservative subset of dependent pattern matching: compound or repeated
+indices are left fixed, with no equation solving or impossible-branch pruning.
+Other local hypotheses are not generalized or rewritten. Matches still require
+an expected result type and exhaustive flat constructor patterns.
 
 ## Higher inductive types
 
@@ -298,11 +307,12 @@ Completed foundations:
 - [x] dependent inductive eliminators;
 - [x] conservative generic ordinary-inductive composition;
 - [x] surface `data` declarations for ordinary and indexed families;
-- [x] non-dependent pattern matching and structural recursion lowering.
+- [x] non-dependent pattern matching and structural recursion lowering;
+- [x] expected-type-directed dependent constructor refinement for ordinary indexed families.
 
 Next milestones:
 
-- [ ] dependent pattern matching;
+- [ ] broader dependent pattern matching (index equations and nested patterns);
 - [ ] cubical surface syntax;
 - [ ] higher inductive types, beginning with `Circle`.
 

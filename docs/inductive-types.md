@@ -45,7 +45,7 @@ The current implementation includes:
 - neutral eliminators;
 - quotation/conversion support;
 - surface `data` declarations;
-- ordinary constructor pattern matching elaborated above the core;
+- expected-type-directed dependent constructor refinement elaborated above the core;
 - trusted metadata validation before definition checking;
 - conservative constructor-directed composition for non-indexed, parameterized,
   recursive, and indexed ordinary families.
@@ -114,6 +114,15 @@ computed induction hypotheses.
 When the scrutinee is neutral, the eliminator remains neutral until evaluation
 learns which constructor is present.
 
+Surface matching now derives this motive from an expected result type, abstracting
+distinct local-variable indices and a local-variable scrutinee under fresh binders.
+Constructor methods and recursive hypotheses instantiate the same motive at their
+respective indices and values. This supports dependent identities and structural
+copy for `Vec A n`; the kernel still checks every generated method. Compound or
+repeated indices remain fixed, with no equation solving, impossible-branch pruning,
+or rewriting of other local hypotheses. Nested patterns and match-result inference
+remain unsupported.
+
 ## Primitive Nat and Bool
 
 Primitive `Nat` and `Bool` remain in the core. They are useful reference
@@ -163,7 +172,7 @@ The major remaining design areas are:
 - mutual inductive families;
 - an explicit large-elimination policy;
 - universe polymorphism;
-- dependent pattern matching refinements;
+- broader dependent pattern matching (nested patterns and index equations);
 - higher inductive constructors with boundary data and coherence.
 
 Higher inductive types should extend the checked declaration representation with

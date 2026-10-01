@@ -17,7 +17,8 @@ The current system already has:
 - surface `data` declarations for parameterized and indexed families;
 - checked indexed-inductive metadata with conservative trusted positivity validation;
 - generic dependent eliminators and iota computation;
-- ordinary constructor pattern matching and structural-recursion lowering;
+- expected-type-directed constructor matching with dependent index/value
+  refinement and structural-recursion lowering;
 - conservative constructor-directed composition for the dimensionwise-constant
   ordinary-inductive fragment;
 - cumulative explicit universes;
@@ -89,12 +90,18 @@ interval structure.
 
 ### Dependent pattern matching
 
-Ordinary constructor matching exists. The next pattern-matching work is
-dependent refinement: matching an indexed constructor changes what is known
-about indices in the branch context.
+Expected-type-directed dependent constructor refinement now exists for ordinary
+indexed families. The elaborator abstracts distinct local-variable indices and
+a local-variable scrutinee from the surrounding expected result type, under fresh
+binders. Each branch uses the constructor's result indices and constructed value;
+each recursive hypothesis uses its argument's own indices and value. The result
+is an existing checked generic eliminator, with no new kernel matching rule.
 
-This should elaborate to checked elimination principles rather than become an
-independent evaluator mechanism.
+This does not implement full dependent pattern matching. Compound or repeated
+indices remain fixed; there is no index-equation solving, impossible-branch
+pruning, or generalization of other dependent local hypotheses. Flat exhaustive
+patterns and an expected result type are still required. Nested patterns and
+general match-result inference remain future work.
 
 ### Cubical surface syntax
 
@@ -153,7 +160,7 @@ The project should avoid making the trusted core larger merely to obtain:
 The next architectural tests are therefore:
 
 ```text
-dependent pattern refinement
+broader dependent pattern matching
         |
         v
 ergonomic cubical surface syntax

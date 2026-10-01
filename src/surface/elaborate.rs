@@ -23,6 +23,7 @@ struct Elaborator {
     globals: HashMap<String, usize>,
     global_types: HashMap<String, Expr>,
     locals: Vec<(String, Expr)>,
+    fresh: usize,
     current_definition: Option<String>,
     recursive_calls: HashMap<String, (String, Vec<Expr>)>,
 }
@@ -305,8 +306,49 @@ impl Elaborator {
             .collect::<Result<Vec<_>>>()?;
         let scrutinee = self.term_expected(scrutinee, Some(&scrutinee_ty))?;
 
-        let motive_body = self.term(expected)?;
-        let motive = self.lambda_n(motive_body, declaration.indices.len() + 1);
+        // Resolve the result in the original scope first. Reify its free variables
+        // through an environment that abstracts distinct local indices/value.
+        // Non-variable or repeated indices remain fixed (no equation solving).
+        let expected_term = self.term(expected)?;
+        let mut result_env = self
+            .locals
+            .iter()
+            .map(|(n, _)| Expr::Name(n.clone()))
+            .collect::<Vec<_>>();
+        let targets = indices
+            .iter()
+            .copied()
+            .chain([scrutinee])
+            .collect::<Vec<_>>();
+        let motive_names = targets
+            .iter()
+            .map(|_| self.fresh_name())
+            .collect::<Vec<_>>();
+        for (target, name) in targets.iter().zip(&motive_names) {
+            if let Term::Var(index) = self.core.terms.get(*target).term {
+                let occurrences = targets.iter().filter(|other| {
+                    matches!(self.core.terms.get(**other).term, Term::Var(i) if i == index)
+                }).count();
+                if occurrences == 1 {
+                    let position = result_env.len() - 1 - index;
+                    result_env[position] = Expr::Name(name.clone());
+                }
+            }
+        }
+        let result = self.surface_expr_in(expected_term, &result_env)?;
+        let saved = self.locals.len();
+        let mut telescope = parameter_exprs.clone();
+        for (entry, name) in declaration.indices.iter().zip(&motive_names) {
+            let ty = self.surface_expr_in(entry.ty, &telescope)?;
+            self.locals.push((name.clone(), ty));
+            telescope.push(Expr::Name(name.clone()));
+        }
+        let value_type = apply_expr(Expr::Name(declaration.name.clone()), telescope);
+        self.locals
+            .push((motive_names.last().unwrap().clone(), value_type));
+        let motive_body = self.term(&result);
+        self.locals.truncate(saved);
+        let motive = self.lambda_n(motive_body?, motive_names.len());
 
         let mut methods = Vec::with_capacity(declaration.constructors.len());
         for constructor_id in &declaration.constructors {
@@ -322,25 +364,30 @@ impl Elaborator {
                 unreachable!("validated constructor pattern");
             };
 
+            let saved_calls = self.recursive_calls.clone();
             let mut pushed = 0;
-            let mut metadata_names = parameter_exprs
-                .iter()
-                .map(|parameter| match parameter {
-                    Expr::Name(name) => name.clone(),
-                    _ => "<parameter>".to_owned(),
-                })
-                .collect::<Vec<_>>();
+            let mut metadata_env = parameter_exprs.clone();
+            let mut branch_body = branch.body.clone();
+            let mut seen = HashSet::new();
             for (argument_index, (argument, entry)) in
                 arguments.iter().zip(&constructor.arguments).enumerate()
             {
-                let Pattern::Name(name) = argument else {
+                let Pattern::Name(source_name) = argument else {
                     return Err(Error::plain(
                         "nested constructor patterns are not supported yet",
                     ));
                 };
-                let ty = self.surface_type_in(entry.ty, &metadata_names)?;
+                if !seen.insert(source_name) {
+                    return Err(Error::plain("duplicate pattern argument"));
+                }
+                // Fresh names prevent pattern binders from capturing outer result
+                // variables or parameters during motive instantiation.
+                let name = self.fresh_name();
+                let value = Expr::Name(name.clone());
+                branch_body = substitute(&branch_body, source_name, &value);
+                let ty = self.surface_expr_in(entry.ty, &metadata_env)?;
                 self.locals.push((name.clone(), ty.clone()));
-                metadata_names.push(name.clone());
+                metadata_env.push(value.clone());
                 pushed += 1;
                 if constructor.recursive_arguments.contains(&argument_index) {
                     let (recursive_family, mut recursive_parameters, recursive_indices) =
@@ -350,23 +397,27 @@ impl Elaborator {
                             "recursive constructor argument belongs to the wrong family",
                         ));
                     }
+                    let ih_type =
+                        instantiate_result(&result, &motive_names, &recursive_indices, value);
                     recursive_parameters.extend(recursive_indices);
-                    let ih = format!("<ih:{}>", name);
-                    self.locals.push((ih.clone(), expected.clone()));
+                    let ih = self.fresh_name();
+                    self.locals.push((ih.clone(), ih_type));
                     self.recursive_calls
-                        .insert(name.clone(), (ih, recursive_parameters));
+                        .insert(name, (ih, recursive_parameters));
                     pushed += 1;
                 }
             }
-            let body = self.term_expected(&branch.body, Some(expected));
-            for argument in arguments {
-                if let Pattern::Name(name) = argument {
-                    self.recursive_calls.remove(name);
-                }
-            }
-            for _ in 0..pushed {
-                self.locals.pop();
-            }
+            let result_indices = constructor
+                .result_indices
+                .iter()
+                .map(|index| self.surface_expr_in(*index, &metadata_env))
+                .collect::<Result<Vec<_>>>()?;
+            let constructor_value = apply_expr(Expr::Name(constructor.name.clone()), metadata_env);
+            let branch_expected =
+                instantiate_result(&result, &motive_names, &result_indices, constructor_value);
+            let body = self.term_expected(&branch_body, Some(&branch_expected));
+            self.recursive_calls = saved_calls;
+            self.locals.truncate(saved);
             methods.push(self.lambda_n(body?, pushed));
         }
 
@@ -462,43 +513,12 @@ impl Elaborator {
                 Term::Lam(body?)
             }
             Expr::Apply { function, argument } => {
-                let mut head = expr;
-                let mut recursive_arguments = Vec::new();
-                while let Expr::Apply { function, argument } = head {
-                    recursive_arguments.push(&**argument);
-                    head = function;
-                }
-                recursive_arguments.reverse();
-
-                if let Expr::Name(function_name) = head
-                    && self.current_definition.as_ref() == Some(function_name)
-                {
-                    let Some(Expr::Name(argument_name)) = recursive_arguments.last() else {
-                        return Err(Error::plain(
-                            "recursive calls must target a structural argument",
-                        ));
-                    };
-                    let (ih, expected_prefix) =
-                        self.recursive_calls.get(argument_name).ok_or_else(|| {
-                            Error::plain("recursive call is not on a structurally smaller argument")
-                        })?;
-                    let actual_prefix =
-                        &recursive_arguments[..recursive_arguments.len().saturating_sub(1)];
-                    if actual_prefix.len() != expected_prefix.len()
-                        || actual_prefix
-                            .iter()
-                            .zip(expected_prefix)
-                            .any(|(actual, expected)| *actual != expected)
-                    {
-                        return Err(Error::plain(
-                            "recursive call parameters or indices do not match the recursive argument",
-                        ));
-                    }
+                if let Some(ih) = self.recursive_ih(expr)? {
                     let index = self
                         .locals
                         .iter()
                         .rev()
-                        .position(|(local, _)| local == ih)
+                        .position(|(local, _)| local == &ih)
                         .ok_or_else(|| Error::plain("recursive induction hypothesis escaped"))?;
                     Term::Var(index)
                 } else {
@@ -574,26 +594,77 @@ impl Elaborator {
         Err(Error::plain(format!("cannot infer type of '{name}'")))
     }
 
-    fn surface_type_in(&self, term: TermId, names: &[String]) -> Result<Expr> {
+    // `=` cannot occur in a parsed source name.
+    fn fresh_name(&mut self) -> String {
+        let name = format!("<match={}>", self.fresh);
+        self.fresh += 1;
+        name
+    }
+
+    // Decode checked telescope syntax with actual parameter/argument expressions,
+    // rather than substituting names or placeholder strings for parameters.
+    fn surface_expr_in(&mut self, term: TermId, env: &[Expr]) -> Result<Expr> {
         match self.core.terms.get(term).term.clone() {
             Term::U(level) => Ok(Expr::Universe(level)),
             Term::Bool => Ok(Expr::Bool),
+            Term::True => Ok(Expr::True),
+            Term::False => Ok(Expr::False),
             Term::Nat => Ok(Expr::Nat),
-            Term::Inductive(inductive) => Ok(Expr::Name(
-                self.core.inductives[inductive.index()].name.clone(),
-            )),
-            Term::App(function, argument) => Ok(Expr::Apply {
-                function: Box::new(self.surface_type_in(function, names)?),
-                argument: Box::new(self.surface_type_in(argument, names)?),
-            }),
-            Term::Var(index) => names
+            Term::Zero => Ok(Expr::Zero),
+            Term::Suc(value) => Ok(Expr::Suc(Box::new(self.surface_expr_in(value, env)?))),
+            Term::Global(index) => Ok(Expr::Name(self.core.decls[index].name.clone())),
+            Term::Inductive(id) => Ok(Expr::Name(self.core.inductives[id.index()].name.clone())),
+            Term::Constructor(id) => {
+                Ok(Expr::Name(self.core.constructors[id.index()].name.clone()))
+            }
+            Term::App(function, argument) => {
+                // Surface lets lower to an annotated lambda application.
+                if let Term::Ann(lambda, _) = self.core.terms.get(function).term
+                    && let Term::Lam(body) = self.core.terms.get(lambda).term
+                {
+                    let value = self.surface_expr_in(argument, env)?;
+                    let name = self.fresh_name();
+                    let mut inner = env.to_vec();
+                    inner.push(Expr::Name(name.clone()));
+                    return Ok(Expr::Let {
+                        name,
+                        value: Box::new(value),
+                        body: Box::new(self.surface_expr_in(body, &inner)?),
+                    });
+                }
+                Ok(Expr::Apply {
+                    function: Box::new(self.surface_expr_in(function, env)?),
+                    argument: Box::new(self.surface_expr_in(argument, env)?),
+                })
+            }
+            Term::Lam(body) => {
+                let name = self.fresh_name();
+                let mut inner = env.to_vec();
+                inner.push(Expr::Name(name.clone()));
+                Ok(Expr::Lambda {
+                    parameter: name,
+                    body: Box::new(self.surface_expr_in(body, &inner)?),
+                })
+            }
+            Term::Pi(domain, codomain) => {
+                let domain = self.surface_expr_in(domain, env)?;
+                let name = self.fresh_name();
+                let mut inner = env.to_vec();
+                inner.push(Expr::Name(name.clone()));
+                Ok(Expr::Pi {
+                    parameter: Some(name),
+                    domain: Box::new(domain),
+                    codomain: Box::new(self.surface_expr_in(codomain, &inner)?),
+                })
+            }
+            Term::Var(index) => env
                 .iter()
                 .rev()
                 .nth(index)
-                .map(|name| Expr::Name(name.clone()))
+                .cloned()
                 .ok_or_else(|| Error::plain("inductive metadata contains an escaped variable")),
             _ => Err(Error::plain(
-                "inductive metadata type is not representable in surface syntax",
+                "match result or metadata is not representable in surface syntax",
             )),
         }
     }
@@ -623,7 +694,31 @@ impl Elaborator {
         }
     }
 
+    fn recursive_ih(&self, expr: &Expr) -> Result<Option<String>> {
+        let (head, arguments) = application_spine(expr);
+        if self.current_definition.as_ref() != Some(&head) || arguments.is_empty() {
+            return Ok(None);
+        }
+        let Some(Expr::Name(argument_name)) = arguments.last() else {
+            return Err(Error::plain(
+                "recursive calls must target a structural argument",
+            ));
+        };
+        let (ih, expected_prefix) = self.recursive_calls.get(argument_name).ok_or_else(|| {
+            Error::plain("recursive call is not on a structurally smaller argument")
+        })?;
+        if &arguments[..arguments.len() - 1] != expected_prefix {
+            return Err(Error::plain(
+                "recursive call parameters or indices do not match the recursive argument",
+            ));
+        }
+        Ok(Some(ih.clone()))
+    }
+
     fn infer(&self, expr: &Expr) -> Result<Expr> {
+        if let Some(ih) = self.recursive_ih(expr)? {
+            return self.infer(&Expr::Name(ih));
+        }
         match expr {
             Expr::Name(name) => self
                 .locals
@@ -659,6 +754,7 @@ impl Elaborator {
                 let mut locals = self.locals.clone();
                 locals.push((name.clone(), value_ty));
                 let nested = Elaborator {
+                    fresh: self.fresh,
                     core: Program::default(),
                     globals: self.globals.clone(),
                     global_types: self.global_types.clone(),
@@ -680,6 +776,7 @@ impl Elaborator {
                     (**domain).clone(),
                 ));
                 let nested = Elaborator {
+                    fresh: self.fresh,
                     core: Program::default(),
                     globals: self.globals.clone(),
                     global_types: self.global_types.clone(),
@@ -697,6 +794,24 @@ impl Elaborator {
             Expr::Match { .. } => Err(Error::plain("cannot infer surface match yet")),
         }
     }
+}
+
+fn apply_expr(head: Expr, arguments: impl IntoIterator<Item = Expr>) -> Expr {
+    arguments
+        .into_iter()
+        .fold(head, |function, argument| Expr::Apply {
+            function: Box::new(function),
+            argument: Box::new(argument),
+        })
+}
+
+fn instantiate_result(result: &Expr, names: &[String], indices: &[Expr], value: Expr) -> Expr {
+    names
+        .iter()
+        .zip(indices.iter().cloned().chain([value]))
+        .fold(result.clone(), |result, (name, value)| {
+            substitute(&result, name, &value)
+        })
 }
 
 fn application_spine(expr: &Expr) -> (String, Vec<Expr>) {
@@ -771,6 +886,40 @@ fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
             } else {
                 Box::new(substitute(body, name, replacement))
             },
+        },
+        Expr::Match {
+            scrutinee,
+            branches,
+        } => Expr::Match {
+            scrutinee: Box::new(substitute(scrutinee, name, replacement)),
+            branches: branches
+                .iter()
+                .map(|branch| {
+                    let shadows = match &branch.pattern {
+                        Pattern::Name(n) => n == name,
+                        Pattern::Constructor { arguments, .. } => arguments
+                            .iter()
+                            .any(|p| matches!(p, Pattern::Name(n) if n == name)),
+                    };
+                    super::ast::MatchBranch {
+                        pattern: branch.pattern.clone(),
+                        body: if shadows {
+                            branch.body.clone()
+                        } else {
+                            substitute(&branch.body, name, replacement)
+                        },
+                    }
+                })
+                .collect(),
+        },
+        Expr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => Expr::If {
+            condition: Box::new(substitute(condition, name, replacement)),
+            then_branch: Box::new(substitute(then_branch, name, replacement)),
+            else_branch: Box::new(substitute(else_branch, name, replacement)),
         },
         Expr::Suc(value) => Expr::Suc(Box::new(substitute(value, name, replacement))),
         _ => expr.clone(),
