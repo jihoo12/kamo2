@@ -1,8 +1,8 @@
-# Inductive families: core design sketch
+# Inductive families: implemented ordinary fragment
 
 This document narrows the language roadmap into an implementation direction for
-ordinary inductive families. It is a design sketch for the `Vec` milestone,
-not yet a kernel specification.
+ordinary inductive families. It records the implemented pre-HIT boundary and
+the deliberately conservative parts of the `Vec` milestone.
 
 ## Why this needs a core design
 
@@ -168,7 +168,7 @@ Mutual inductive families are not part of the first milestone.
 
 ## Strict positivity
 
-The first implementation should deliberately accept a conservative fragment.
+The implementation deliberately accepts a conservative fragment.
 
 Recursive occurrences of `D` are allowed only in positive positions. In
 particular:
@@ -180,15 +180,18 @@ D -> X
 inside a constructor argument is negative and must be rejected when `D` is
 the domain of that arrow.
 
-For the initial `Vec` milestone, it is acceptable to support direct recursive
-arguments first:
+Direct recursive arguments are supported:
 
 ```text
 tail : Vec A n
 ```
 
-and postpone nested positivity such as `List (D ...)` until the variance of
-referenced type constructors is represented.
+Nested positivity such as `List (D ...)` is rejected until variance of
+referenced type constructors is represented. The trusted metadata validator,
+not only the surface elaborator, recomputes direct recursive positions and
+requires exact metadata, complete family application, and unchanged uniform
+parameters. It also rejects escaped variables and malformed ownership/result
+metadata, then semantically checks telescope sorts and result indices.
 
 Positivity is a trusted check, not a parser restriction.
 
@@ -290,26 +293,27 @@ eliminators round-trip into core syntax.
 
 This is the main reason not to hide inductive structure behind an encoding.
 
-The existing evaluator has composition behavior specialized for `Bool` and
-`Nat`. A generic inductive family will eventually need analogous structural
-composition.
+The evaluator now has structural composition for the supported generic
+ordinary-inductive fragment as well as primitive `Bool` and `Nat`.
 
-For the first `Vec` implementation, separate two goals:
+The implementation separates two guarantees:
 
 1. **dependent elimination milestone:** formation, construction, elimination,
    iota reduction, conversion, and quotation work;
-2. **cubical stability milestone:** composition over user-defined inductive
-   families is implemented and tested.
+2. **cubical stability milestone:** conservative composition over user-defined
+   non-indexed, parameterized, and indexed families is implemented and tested.
 
-We should not claim full cubical support for a user-defined family after only
-goal 1.
+Constructor-directed reduction requires the cap and every relevant tube to have
+the same known constructor. Parameters must agree with the source/target family,
+each dependent field type must be definitionally stable, and reconstructed
+result indices must agree with the target indices. Fields, including direct
+recursive fields, are composed structurally. A known tube with a different
+constructor, a neutral constructor shape, varying parameters, or unresolved
+field/index coherence leaves the composition neutral instead of guessing.
 
-A likely generic strategy for ordinary strictly-positive constructors is to
-preserve the constructor when compatible boundary data has the same constructor
-shape and recursively compose its fields. Indexed families make this more
-subtle because indices and dependent fields must remain coherent.
-
-The exact composition rule requires a separate specification before coding it.
+This is intentionally narrower than a general schema for all strictly positive
+functors. In particular, nested inductives and varying dependent field types are
+not assigned an ad-hoc composition rule.
 
 ## Relationship to primitive Nat and Bool
 
@@ -320,10 +324,10 @@ Instead, use them as reference implementations:
 - compare generated `Nat` elimination with primitive `NatElim`;
 - compare reduction behavior;
 - compare quotation/conversion;
-- later compare composition behavior.
+- compare composition behavior.
 
-Only after a user-defined `Nat` reaches the required behavior should we decide
-whether the primitive variants can be removed.
+Surface `Nat` and `Bool` now use generic declarations; primitive variants remain
+as a core-language compatibility and differential-testing oracle.
 
 This gives us differential tests during the transition.
 
@@ -353,35 +357,34 @@ parse declaration
 Pattern matching is intentionally absent from this pipeline. It will later
 compile to the generic eliminator.
 
-## Implementation slices
+## Implemented slices
 
-The `Vec` milestone should be implemented in small independently testable
-slices.
+The `Vec` milestone was implemented in independently tested slices.
 
 ### Slice A: metadata only
 
-Add internal IDs and checked representations for inductive declarations and
-constructors. No new surface syntax yet. Unit tests construct metadata directly.
+Internal IDs and checked representations store declarations and constructors;
+unit tests also construct metadata directly to exercise the trust boundary.
 
 ### Slice B: family and constructors
 
-Add generic family/constructor core values, typing, evaluation, quotation, and
-conversion. Test non-recursive data first, then a generic `Nat`.
+Generic family/constructor core values have typing, evaluation, quotation, and
+conversion coverage for non-recursive data and generic `Nat`.
 
 ### Slice C: dependent eliminator
 
-Add motive/method checking, neutral elimination, and iota reduction. Reproduce
-primitive `Nat` behavior and then test `Vec`.
+Motive/method checking, neutral elimination, and iota reduction cover generic
+`Nat` and indexed `Vec`.
 
 ### Slice D: declaration elaboration
 
-Add minimal `data` syntax and elaborate it into checked metadata. Keep pattern
-matching out.
+Surface `data` syntax elaborates to checked metadata, and ordinary exhaustive
+pattern matching lowers to the generic eliminator.
 
 ### Slice E: cubical composition
 
-Specify and implement composition for the supported inductive fragment. Add
-path/composition tests for generic `Nat` and `Vec`.
+Conservative composition is implemented for the supported fragment, with
+generic `Nat`, parameterized data, and indexed `Vec` regressions.
 
 Only after these slices should dependent pattern matching become the next major
 feature.
@@ -440,24 +443,10 @@ boundary-aware constructor metadata
 higher inductive families
 ```
 
-## Decision for the next implementation PR
+## Pre-HIT stopping point
 
-Proceed with **checked inductive metadata in the core**, while keeping existing
-primitive `Nat` and `Bool` unchanged.
-
-Before Slice A, implement the cumulative-universe checking rules described in
-[`universes.md`](universes.md). This prevents the inductive representation
-from being designed around Kamo's old non-cumulative checking behavior.
-
-After that universe change, the first inductive code PR should implement only
-Slice A:
-
-- `InductiveId` and `ConstructorId`;
-- internal telescope/inductive/constructor metadata;
-- storage in `Program`;
-- validation-oriented unit-test fixtures;
-- no parser syntax;
-- no evaluator behavior change.
-
-This gives us a concrete representation to review before increasing the trusted
-checker/evaluator.
+The ordinary point-constructor subsystem now has checked metadata, conservative
+strict positivity, dependent elimination, quotation/conversion, and structural
+composition for its documented fragment. The next design must introduce a
+separate checked account of higher-constructor boundaries and coherence; it must
+not reinterpret ordinary `ConstructorDecl` as if it already represented paths.

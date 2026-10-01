@@ -121,6 +121,187 @@ pub(crate) struct Program {
 }
 
 impl Program {
+    /// Validate the trusted, resolved representation of ordinary inductives.
+    /// This deliberately accepts only direct recursive arguments. Any nested
+    /// occurrence (including an occurrence in a function domain) is rejected.
+    pub(crate) fn validate_inductives(&self) -> Result<()> {
+        for (position, family) in self.inductives.iter().enumerate() {
+            if family.id.index() != position {
+                return Err(Error::plain("malformed inductive id"));
+            }
+            let mut bound = 0;
+            for entry in &family.parameters {
+                self.validate_scoped(entry.ty, bound, 0)?;
+                if self.contains_inductive(entry.ty, family.id, 0)? {
+                    return Err(Error::plain(
+                        "inductive family occurs in its own parameter telescope",
+                    ));
+                }
+                bound += 1;
+            }
+            for entry in &family.indices {
+                self.validate_scoped(entry.ty, bound, 0)?;
+                if self.contains_inductive(entry.ty, family.id, 0)? {
+                    return Err(Error::plain(
+                        "inductive family occurs in its own index telescope",
+                    ));
+                }
+                bound += 1;
+            }
+            for constructor_id in &family.constructors {
+                let constructor = self
+                    .constructors
+                    .get(constructor_id.index())
+                    .ok_or_else(|| Error::plain("inductive references a missing constructor"))?;
+                if constructor.id != *constructor_id || constructor.inductive != family.id {
+                    return Err(Error::plain(
+                        "constructor ownership metadata is inconsistent",
+                    ));
+                }
+            }
+        }
+        for (position, constructor) in self.constructors.iter().enumerate() {
+            if constructor.id.index() != position {
+                return Err(Error::plain("malformed constructor id"));
+            }
+            let family = self
+                .inductives
+                .get(constructor.inductive.index())
+                .ok_or_else(|| Error::plain("constructor references a missing inductive"))?;
+            if !family.constructors.contains(&constructor.id) {
+                return Err(Error::plain(
+                    "constructor is missing from its inductive family",
+                ));
+            }
+            let parameter_count = family.parameters.len();
+            let mut bound = parameter_count;
+            let mut actual_recursive = Vec::new();
+            for (argument_index, entry) in constructor.arguments.iter().enumerate() {
+                self.validate_scoped(entry.ty, bound, 0)?;
+                if let Some(arguments) =
+                    self.direct_inductive_application(entry.ty, constructor.inductive)
+                {
+                    if arguments.len() != parameter_count + family.indices.len() {
+                        return Err(Error::plain(
+                            "recursive argument must apply every parameter and index",
+                        ));
+                    }
+                    for (parameter, argument) in arguments.iter().take(parameter_count).enumerate()
+                    {
+                        let expected = bound - 1 - parameter;
+                        if !matches!(self.terms.get(*argument).term, Term::Var(index) if index == expected)
+                        {
+                            return Err(Error::plain(
+                                "recursive argument changes a uniform parameter",
+                            ));
+                        }
+                    }
+                    actual_recursive.push(argument_index);
+                } else if self.contains_inductive(entry.ty, constructor.inductive, 0)? {
+                    return Err(Error::plain(
+                        "nested or negative recursive occurrence is not supported",
+                    ));
+                }
+                bound += 1;
+            }
+            if actual_recursive != constructor.recursive_arguments {
+                return Err(Error::plain(
+                    "recursive argument metadata does not match constructor types",
+                ));
+            }
+            if constructor.result_indices.len() != family.indices.len() {
+                return Err(Error::plain(
+                    "constructor has the wrong number of result indices",
+                ));
+            }
+            for index in &constructor.result_indices {
+                self.validate_scoped(*index, bound, 0)?;
+                if self.contains_inductive(*index, constructor.inductive, 0)? {
+                    return Err(Error::plain(
+                        "constructor result index contains the inductive family",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn direct_inductive_application(
+        &self,
+        term: TermId,
+        family: InductiveId,
+    ) -> Option<Vec<TermId>> {
+        let mut cursor = term;
+        let mut arguments = Vec::new();
+        while let Term::App(function, argument) = self.terms.get(cursor).term {
+            arguments.push(argument);
+            cursor = function;
+        }
+        arguments.reverse();
+        matches!(self.terms.get(cursor).term, Term::Inductive(id) if id == family)
+            .then_some(arguments)
+    }
+
+    fn contains_inductive(&self, term: TermId, family: InductiveId, depth: usize) -> Result<bool> {
+        if depth > 512 {
+            return Err(Error::plain("inductive metadata nesting exceeds 512"));
+        }
+        let found = match &self.terms.get(term).term {
+            Term::Inductive(id) => *id == family,
+            Term::Pi(a, b) | Term::Sigma(a, b) | Term::App(a, b) | Term::Ann(a, b) => {
+                self.contains_inductive(*a, family, depth + 1)?
+                    || self.contains_inductive(*b, family, depth + 1)?
+            }
+            Term::Path(a, b, c) => {
+                self.contains_inductive(*a, family, depth + 1)?
+                    || self.contains_inductive(*b, family, depth + 1)?
+                    || self.contains_inductive(*c, family, depth + 1)?
+            }
+            Term::Suc(a) => self.contains_inductive(*a, family, depth + 1)?,
+            _ => false,
+        };
+        Ok(found)
+    }
+
+    fn validate_scoped(&self, term: TermId, bound: usize, depth: usize) -> Result<()> {
+        if depth > 512 {
+            return Err(Error::plain("inductive metadata nesting exceeds 512"));
+        }
+        match &self.terms.get(term).term {
+            Term::Var(index) if *index >= bound => {
+                return Err(Error::plain(
+                    "inductive metadata contains an escaped variable",
+                ));
+            }
+            Term::Var(_) => {}
+            Term::Pi(a, b) | Term::Sigma(a, b) => {
+                self.validate_scoped(*a, bound, depth + 1)?;
+                self.validate_scoped(*b, bound + 1, depth + 1)?;
+            }
+            Term::App(a, b) | Term::Ann(a, b) => {
+                self.validate_scoped(*a, bound, depth + 1)?;
+                self.validate_scoped(*b, bound, depth + 1)?;
+            }
+            Term::Path(a, b, c) => {
+                self.validate_scoped(*a, bound, depth + 1)?;
+                self.validate_scoped(*b, bound, depth + 1)?;
+                self.validate_scoped(*c, bound, depth + 1)?;
+            }
+            Term::Suc(a) => self.validate_scoped(*a, bound, depth + 1)?,
+            Term::Global(_)
+            | Term::U(_)
+            | Term::Bool
+            | Term::True
+            | Term::False
+            | Term::Nat
+            | Term::Inductive(_)
+            | Term::Constructor(_)
+            | Term::Zero => {}
+            _ => return Err(Error::plain("unsupported term in inductive metadata")),
+        }
+        Ok(())
+    }
+
     pub(crate) fn alloc(&mut self, term: Term, offset: usize) -> TermId {
         self.terms.alloc(Node { term, offset })
     }
@@ -610,5 +791,41 @@ mod inductive_metadata_tests {
         assert_eq!(nil.id.index(), 0);
         assert_eq!(cons.id.index(), 1);
         assert_eq!(program.constructors.len(), 2);
+    }
+
+    #[test]
+    fn trusted_validation_rejects_forged_recursive_metadata() {
+        let mut program = Program::default();
+        let family = program.push_inductive("D".to_owned(), 0, vec![], vec![]);
+        let recursive = entry(&mut program, "value", Term::Inductive(family));
+        program.push_constructor(family, "step".to_owned(), vec![recursive], vec![], vec![]);
+        assert!(
+            program
+                .validate_inductives()
+                .unwrap_err()
+                .message
+                .contains("recursive argument metadata")
+        );
+    }
+
+    #[test]
+    fn trusted_validation_rejects_negative_occurrences() {
+        let mut program = Program::default();
+        let family = program.push_inductive("D".to_owned(), 0, vec![], vec![]);
+        let domain = program.alloc(Term::Inductive(family), 0);
+        let nat = program.alloc(Term::Nat, 0);
+        let negative = program.alloc(Term::Pi(domain, nat), 0);
+        let argument = TelescopeEntry {
+            name: "f".to_owned(),
+            ty: negative,
+        };
+        program.push_constructor(family, "bad".to_owned(), vec![argument], vec![], vec![]);
+        assert!(
+            program
+                .validate_inductives()
+                .unwrap_err()
+                .message
+                .contains("negative")
+        );
     }
 }

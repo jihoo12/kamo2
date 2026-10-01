@@ -338,6 +338,55 @@ mod tests {
     }
 
     #[test]
+    fn substitution_preserves_entailment_and_contradictions() {
+        let mut f = Faces::default();
+        let (i, j, k) = (Dim::Var(0), Dim::Var(1), Dim::Var(2));
+        let ij = f.eq(i, j);
+        let j0 = f.eq(j, Dim::Zero);
+        let premise = f.and(ij, j0);
+        let conclusion = f.eq(i, Dim::Zero);
+        assert!(f.entails(premise, conclusion).unwrap());
+        let premise = f.substitute(premise, &|dimension| {
+            if dimension == j { k } else { dimension }
+        });
+        let conclusion = f.substitute(conclusion, &|dimension| {
+            if dimension == j { k } else { dimension }
+        });
+        assert!(f.entails(premise, conclusion).unwrap());
+
+        let i0 = f.eq(i, Dim::Zero);
+        let i1 = f.eq(i, Dim::One);
+        let contradiction = f.and(i0, i1);
+        assert!(f.inconsistent(contradiction).unwrap());
+        let substituted = f.substitute(contradiction, &|dimension| {
+            if dimension == i { k } else { dimension }
+        });
+        assert!(f.inconsistent(substituted).unwrap());
+    }
+
+    #[test]
+    fn conjunction_disjunction_and_overlap_are_logical_not_interval_operations() {
+        let mut f = Faces::default();
+        let (i, j) = (Dim::Var(0), Dim::Var(1));
+        let i0 = f.eq(i, Dim::Zero);
+        let j0 = f.eq(j, Dim::Zero);
+        let both = f.and(i0, j0);
+        let either = f.or(i0, j0);
+        assert!(f.entails(both, either).unwrap());
+        assert!(!f.entails(either, both).unwrap());
+        assert!(f.entails(both, i0).unwrap());
+        assert!(f.entails(both, j0).unwrap());
+
+        let diagonal = f.eq(i, j);
+        let overlap = f.and(diagonal, i0);
+        assert!(f.entails(overlap, j0).unwrap());
+        let top = f.top();
+        let i1 = f.eq(i, Dim::One);
+        let endpoint_union = f.or(i0, i1);
+        assert!(!f.entails(top, endpoint_union).unwrap());
+    }
+
+    #[test]
     fn solver_depth_is_bounded() {
         let mut f = Faces::default();
         let mut face = f.top();

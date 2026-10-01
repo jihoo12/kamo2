@@ -13,7 +13,7 @@ Section numbers below refer to that manuscript.
 | §2.10: dependent paths | Endpoint checking and reduction, path eta, composition with the two endpoint faces added |
 | §2.11: Glue | Contractible-fiber equivalences, checked introduction boundaries and overlaps, unglue beta, Glue eta, weak introduction and extension of partial fiber data, followed by alignment using universally quantified faces |
 | §2.12: universes | Numeric Russell universes, Glue-based universe composition, identity fiber contraction, and equivalence witnesses obtained by transporting identity-equivalence proofs |
-| §§2.13–2.14: strict data | Booleans/naturals and dependent eliminators; constructor-directed composition, using the decidable-checking alternative described for Booleans, extended recursively to naturals |
+| §§2.13–2.14: strict data | Primitive and generic ordinary inductives with dependent eliminators and conservative constructor-directed composition. Generic reduction requires a known common constructor, preserved parameters, definitionally stable field types, and coherent result indices. |
 
 We do **not** implement Boolean or natural-number equality reflection. Empty
 Glue is not definitionally collapsed to its base type, and transport in an
@@ -21,6 +21,19 @@ arbitrary constant type is not given an extra regularity rule. These shortcuts
 would change the specified judgmental equality. Composition across neutral
 types can remain blocked until substitution or stronger face assumptions expose
 a reducible head.
+
+Generic inductive declarations cross a kernel validation boundary before any
+ordinary declaration is checked. The validator checks scoped and well-sorted
+telescopes, constructor ownership, complete result indices, and exact recursive
+argument metadata. Its strict-positivity fragment permits only direct recursive
+arguments with unchanged parameters; negative and nested occurrences are
+rejected. Composition preserves a constructor only when all nonempty boundary
+pieces expose that constructor. If parameter, dependent-field, or index
+coherence cannot be established by conversion, composition remains neutral.
+
+The interval remains Cartesian: dimensions are endpoints or variables, while
+`and` and `or` combine face propositions. They are not interval meet/join, and
+the kernel has no reversal, connections, or endpoint-enumeration principle.
 
 ## Computational univalence
 

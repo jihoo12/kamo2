@@ -947,8 +947,7 @@ impl<'a> Engine<'a> {
                     scrutinee,
                 } => {
                     let scrutinee = self.force(scrutinee, face)?;
-                    let (head, spine) = self.application_spine(scrutinee);
-                    let head = self.force(head, face)?;
+                    let (head, spine) = self.application_spine_forced(scrutinee, face)?;
                     let Val::Constructor(constructor_id) = self.get(head) else {
                         break;
                     };
@@ -1168,14 +1167,25 @@ impl<'a> Engine<'a> {
         })
     }
 
-    fn application_spine(&self, mut value: ValId) -> (ValId, Vec<ValId>) {
+    fn application_spine_forced(
+        &mut self,
+        mut value: ValId,
+        face: FaceId,
+    ) -> Result<(ValId, Vec<ValId>)> {
         let mut arguments = vec![];
-        while let Val::App(function, argument) = self.get(value) {
-            arguments.push(argument);
-            value = function;
+        loop {
+            value = self.force(value, face)?;
+            match self.get(value) {
+                Val::App(function, argument) => {
+                    arguments.push(argument);
+                    value = function;
+                }
+                _ => {
+                    arguments.reverse();
+                    return Ok((value, arguments));
+                }
+            }
         }
-        arguments.reverse();
-        (value, arguments)
     }
 
     pub(crate) fn inductive_application(
@@ -1281,40 +1291,11 @@ impl<'a> Engine<'a> {
             }
         }
         let family = self.force(c.family, face)?;
+        if let Some((inductive, arguments)) = self.inductive_application(family, face)? {
+            return self.compose_inductive(c, face, inductive, arguments);
+        }
         match self.get(family) {
-            Val::Bool | Val::Nat => {
-                let cap = self.force(c.cap, face)?;
-                let tag = match self.get(cap) {
-                    Val::True => 0,
-                    Val::False => 1,
-                    Val::Zero => 2,
-                    Val::Suc(_) => 3,
-                    _ => return Ok(None),
-                };
-                let mut ts = vec![];
-                for (f, t) in c.tubes {
-                    let under = self.faces.and(face, f);
-                    if self.faces.inconsistent(under)? {
-                        continue;
-                    }
-                    let t = self.force(t, under)?;
-                    match (tag, self.get(t)) {
-                        (0, Val::True) | (1, Val::False) | (2, Val::Zero) => {}
-                        (3, Val::Suc(n)) => ts.push((f, n)),
-                        _ => return Ok(None),
-                    }
-                }
-                if let Val::Suc(n) = self.get(cap) {
-                    let n = self.alloc(Val::Com(Composition {
-                        cap: n,
-                        tubes: ts,
-                        ..c
-                    }));
-                    Ok(Some(self.alloc(Val::Suc(n))))
-                } else {
-                    Ok(Some(cap))
-                }
-            }
+            Val::Bool | Val::Nat => self.compose_bool_nat(c, face),
             Val::Sigma(a, b) => {
                 let cap_a = self.fst(c.cap);
                 let tubes_a = c
@@ -1415,6 +1396,224 @@ impl<'a> Engine<'a> {
             _ => Ok(None),
         }
     }
+
+    fn compose_bool_nat(&mut self, c: Composition, face: FaceId) -> Result<Option<ValId>> {
+        let cap = self.force(c.cap, face)?;
+        let tag = match self.get(cap) {
+            Val::True => 0,
+            Val::False => 1,
+            Val::Zero => 2,
+            Val::Suc(_) => 3,
+            _ => return Ok(None),
+        };
+        let mut recursive_tubes = vec![];
+        for (tube_face, tube) in &c.tubes {
+            let under = self.faces.and(face, *tube_face);
+            if self.faces.inconsistent(under)? {
+                continue;
+            }
+            let tube = self.force(*tube, under)?;
+            match (tag, self.get(tube)) {
+                (0, Val::True) | (1, Val::False) | (2, Val::Zero) => {}
+                (3, Val::Suc(predecessor)) => recursive_tubes.push((*tube_face, predecessor)),
+                _ => return Ok(None),
+            }
+        }
+        if let Val::Suc(predecessor) = self.get(cap) {
+            let predecessor = self.alloc(Val::Com(Composition {
+                cap: predecessor,
+                tubes: recursive_tubes,
+                ..c
+            }));
+            Ok(Some(self.alloc(Val::Suc(predecessor))))
+        } else {
+            Ok(Some(cap))
+        }
+    }
+
+    /// Constructor-directed composition for the deliberately small ordinary
+    /// inductive fragment. We only reduce when parameters and every dependent
+    /// field type are definitionally constant across the composition. This is
+    /// conservative: varying or neutral shapes remain as `Com` rather than
+    /// guessing a constructor or transporting an index.
+    fn compose_inductive(
+        &mut self,
+        c: Composition,
+        face: FaceId,
+        inductive: InductiveId,
+        family_arguments: Vec<ValId>,
+    ) -> Result<Option<ValId>> {
+        let family = self.program.inductives[inductive.index()].clone();
+        let parameter_count = family.parameters.len();
+        let index_count = family.indices.len();
+        if family_arguments.len() != parameter_count + index_count {
+            return Err(Error::plain(
+                "malformed inductive family application in composition",
+            ));
+        }
+        let source_family = self.restrict(c.family, c.dim, c.from);
+        let target_family = self.restrict(c.family, c.dim, c.to);
+        let Some((source_id, source_arguments)) =
+            self.inductive_application(source_family, face)?
+        else {
+            return Ok(None);
+        };
+        let Some((target_id, target_arguments)) =
+            self.inductive_application(target_family, face)?
+        else {
+            return Ok(None);
+        };
+        if source_id != inductive
+            || target_id != inductive
+            || source_arguments.len() != family_arguments.len()
+            || target_arguments.len() != family_arguments.len()
+        {
+            return Ok(None);
+        }
+        for (source, target) in source_arguments
+            .iter()
+            .zip(&target_arguments)
+            .take(parameter_count)
+        {
+            if !self.conv(*source, *target, None, face)? {
+                return Ok(None);
+            }
+        }
+
+        let cap = self.force(c.cap, face)?;
+        let (cap_head, cap_spine) = self.application_spine_forced(cap, face)?;
+        let Val::Constructor(constructor_id) = self.get(cap_head) else {
+            return Ok(None);
+        };
+        let constructor = self.program.constructors[constructor_id.index()].clone();
+        if constructor.inductive != inductive
+            || cap_spine.len() != parameter_count + constructor.arguments.len()
+        {
+            return Ok(None);
+        }
+        for (actual, expected) in cap_spine
+            .iter()
+            .zip(&source_arguments)
+            .take(parameter_count)
+        {
+            if !self.conv(*actual, *expected, None, face)? {
+                return Ok(None);
+            }
+        }
+
+        let mut tube_spines = Vec::new();
+        for (tube_face, tube) in &c.tubes {
+            let under = self.faces.and(face, *tube_face);
+            if self.faces.inconsistent(under)? {
+                continue;
+            }
+            let tube = self.force(*tube, under)?;
+            let (head, spine) = self.application_spine_forced(tube, under)?;
+            if !matches!(self.get(head), Val::Constructor(id) if id == constructor_id)
+                || spine.len() != cap_spine.len()
+            {
+                return Ok(None);
+            }
+            let Some((tube_family, tube_family_arguments)) =
+                self.inductive_application(c.family, under)?
+            else {
+                return Ok(None);
+            };
+            if tube_family != inductive || tube_family_arguments.len() != family_arguments.len() {
+                return Ok(None);
+            }
+            for (actual, expected) in spine
+                .iter()
+                .zip(&tube_family_arguments)
+                .take(parameter_count)
+            {
+                if !self.conv(*actual, *expected, None, under)? {
+                    return Ok(None);
+                }
+            }
+            tube_spines.push((*tube_face, under, spine));
+        }
+
+        let source_parameters = source_arguments[..parameter_count].to_vec();
+        let target_parameters = target_arguments[..parameter_count].to_vec();
+        let cap_fields = &cap_spine[parameter_count..];
+        let mut result_fields = Vec::with_capacity(constructor.arguments.len());
+        for argument_index in 0..constructor.arguments.len() {
+            let source_domain = self.constructor_argument_domain(
+                &constructor,
+                &source_parameters,
+                cap_fields,
+                argument_index,
+            );
+            let target_domain = self.constructor_argument_domain(
+                &constructor,
+                &target_parameters,
+                &result_fields,
+                argument_index,
+            );
+            if !self.conv(source_domain, target_domain, None, face)? {
+                return Ok(None);
+            }
+            let mut tubes = Vec::with_capacity(tube_spines.len());
+            for (tube_face, under, spine) in &tube_spines {
+                let tube_parameters = spine[..parameter_count].to_vec();
+                let tube_fields = &spine[parameter_count..];
+                let tube_domain = self.constructor_argument_domain(
+                    &constructor,
+                    &tube_parameters,
+                    tube_fields,
+                    argument_index,
+                );
+                if !self.conv(tube_domain, target_domain, None, *under)? {
+                    return Ok(None);
+                }
+                tubes.push((*tube_face, tube_fields[argument_index]));
+            }
+            result_fields.push(self.alloc(Val::Com(Composition {
+                family: target_domain,
+                cap: cap_fields[argument_index],
+                tubes,
+                ..c.clone()
+            })));
+        }
+
+        let mut env = Env::default();
+        env.terms.extend_from_slice(&target_parameters);
+        env.terms.extend_from_slice(&result_fields);
+        let env = self.env(env);
+        for (result_index, target_index) in constructor
+            .result_indices
+            .iter()
+            .zip(target_arguments.iter().skip(parameter_count))
+        {
+            let result_index = self.thunk(*result_index, env);
+            if !self.conv(result_index, *target_index, None, face)? {
+                return Ok(None);
+            }
+        }
+        let mut result = self.alloc(Val::Constructor(constructor_id));
+        for parameter in target_parameters {
+            result = self.app(result, parameter);
+        }
+        for field in result_fields {
+            result = self.app(result, field);
+        }
+        Ok(Some(result))
+    }
+
+    fn constructor_argument_domain(
+        &mut self,
+        constructor: &crate::syntax::ConstructorDecl,
+        parameters: &[ValId],
+        fields: &[ValId],
+        argument_index: usize,
+    ) -> ValId {
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        env.terms.extend_from_slice(&fields[..argument_index]);
+        let env = self.env(env);
+        self.thunk(constructor.arguments[argument_index].ty, env)
+    }
     pub fn statistics(&self) -> Statistics {
         let payload = self.envs_payload() + self.values_payload() + self.subs_payload();
         Statistics {
@@ -1502,6 +1701,115 @@ mod tests {
             assert_eq!(e.force(open, at_one).unwrap(), f);
             let open = e.force(open, face).unwrap();
             assert!(matches!(e.get(open), Val::PApp(..)));
+        }
+    }
+
+    #[test]
+    fn generic_inductive_composition_is_constructor_directed_and_conservative() {
+        for optimized in [false, true] {
+            let mut program = Program::default();
+            let nat = program.push_inductive("UserNat".to_owned(), 0, vec![], vec![]);
+            let zero = program.push_constructor(nat, "uzero".to_owned(), vec![], vec![], vec![]);
+            let pred_ty = program.alloc(Term::Inductive(nat), 0);
+            let suc = program.push_constructor(
+                nat,
+                "usuc".to_owned(),
+                vec![TelescopeEntry {
+                    name: "pred".to_owned(),
+                    ty: pred_ty,
+                }],
+                vec![],
+                vec![0],
+            );
+            program.validate_inductives().unwrap();
+            let mut e = Engine::new(&program, optimized, 100_000, 100_000);
+            let face = e.faces.top();
+            let i = e.fresh_dim();
+            let family = e.alloc(Val::Inductive(nat));
+            let zero_value = e.alloc(Val::Constructor(zero));
+            let suc_value = e.alloc(Val::Constructor(suc));
+            let one = e.app(suc_value, zero_value);
+            let composed = e.alloc(Val::Com(Composition {
+                dim: i,
+                family,
+                from: Dim::Zero,
+                to: Dim::One,
+                cap: one,
+                tubes: vec![],
+            }));
+            let reduced = e.force(composed, face).unwrap();
+            let (head, fields) = e.application_spine_forced(reduced, face).unwrap();
+            assert!(matches!(e.get(head), Val::Constructor(id) if id == suc));
+            assert_eq!(fields.len(), 1);
+            let predecessor = e.force(fields[0], face).unwrap();
+            assert!(matches!(e.get(predecessor), Val::Constructor(id) if id == zero));
+
+            let j = e.fresh_dim();
+            let boundary = e.faces.eq(Dim::Var(j), Dim::Zero);
+            let blocked = e.alloc(Val::Com(Composition {
+                dim: i,
+                family,
+                from: Dim::Zero,
+                to: Dim::One,
+                cap: one,
+                tubes: vec![(boundary, zero_value)],
+            }));
+            let blocked = e.force(blocked, face).unwrap();
+            assert!(matches!(e.get(blocked), Val::Com(_)));
+            assert_eq!(e.force(blocked, boundary).unwrap(), zero_value);
+        }
+    }
+
+    #[test]
+    fn parameterized_inductive_composition_preserves_parameters() {
+        for optimized in [false, true] {
+            let mut program = Program::default();
+            let type0 = program.alloc(Term::U(0), 0);
+            let option = program.push_inductive(
+                "Option".to_owned(),
+                0,
+                vec![TelescopeEntry {
+                    name: "A".to_owned(),
+                    ty: type0,
+                }],
+                vec![],
+            );
+            let a = program.alloc(Term::Var(0), 0);
+            let some = program.push_constructor(
+                option,
+                "some".to_owned(),
+                vec![TelescopeEntry {
+                    name: "value".to_owned(),
+                    ty: a,
+                }],
+                vec![],
+                vec![],
+            );
+            program.validate_inductives().unwrap();
+            let mut e = Engine::new(&program, optimized, 100_000, 100_000);
+            let face = e.faces.top();
+            let i = e.fresh_dim();
+            let bool_ty = e.alloc(Val::Bool);
+            let family_head = e.alloc(Val::Inductive(option));
+            let family = e.app(family_head, bool_ty);
+            let constructor = e.alloc(Val::Constructor(some));
+            let value = e.app(constructor, bool_ty);
+            let true_value = e.alloc(Val::True);
+            let value = e.app(value, true_value);
+            let composed = e.alloc(Val::Com(Composition {
+                dim: i,
+                family,
+                from: Dim::Zero,
+                to: Dim::One,
+                cap: value,
+                tubes: vec![],
+            }));
+            let reduced = e.force(composed, face).unwrap();
+            let (head, arguments) = e.application_spine_forced(reduced, face).unwrap();
+            assert!(matches!(e.get(head), Val::Constructor(id) if id == some));
+            assert_eq!(arguments.len(), 2);
+            assert!(e.conv(arguments[0], bool_ty, None, face).unwrap());
+            assert_eq!(e.force(arguments[1], face).unwrap(), true_value);
         }
     }
 
@@ -1654,6 +1962,31 @@ mod tests {
         let cons_true = e.alloc(Val::App(cons_zero, true_value));
         let singleton = e.alloc(Val::App(cons_true, nil_bool));
         let one = e.alloc(Val::Suc(zero));
+
+        let vec_value = e.alloc(Val::Inductive(vec));
+        let vec_bool = e.app(vec_value, bool_parameter);
+        let singleton_family = e.app(vec_bool, one);
+        let composition_dimension = e.fresh_dim();
+        let composed_singleton = e.alloc(Val::Com(Composition {
+            dim: composition_dimension,
+            family: singleton_family,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: singleton,
+            tubes: vec![],
+        }));
+        let composed_singleton = e.force(composed_singleton, face).unwrap();
+        let (composed_head, composed_arguments) = e
+            .application_spine_forced(composed_singleton, face)
+            .unwrap();
+        assert!(matches!(e.get(composed_head), Val::Constructor(id) if id == cons));
+        assert_eq!(composed_arguments.len(), 4);
+        assert!(
+            e.conv(composed_arguments[0], bool_parameter, None, face)
+                .unwrap()
+        );
+        assert!(e.conv(composed_arguments[1], zero, None, face).unwrap());
+        assert_eq!(e.force(composed_arguments[2], face).unwrap(), true_value);
 
         let elim = e.alloc(Val::Elim {
             inductive: vec,

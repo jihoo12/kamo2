@@ -6,7 +6,7 @@ fn run() -> std::result::Result<(), String> {
     let mut args = env::args().skip(1).collect::<Vec<_>>();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         println!(
-            "Kamo — experimental Cartesian cubical kernel\n\nUsage:\n  kamo check FILE [--fuel N] [--max-nodes N] [--reference]\n  kamo normalize FILE NAME [--fuel N] [--max-nodes N] [--reference] [--stats]\n\nDefault limits per declaration/evaluation: 1,000,000 steps; 250,000 arena nodes.\nFor a hard process limit, use scripts/with-limits.sh (512 MiB, 30 seconds)."
+            "Kamo — experimental Cartesian cubical kernel\n\nUsage:\n  kamo check FILE [options]\n  kamo normalize FILE NAME [options]\n  kamo check-surface FILE [options]\n  kamo normalize-surface FILE NAME [options]\n\nDefault limits per declaration/evaluation: 1,000,000 steps; 250,000 arena nodes.\nFor a hard process limit, use scripts/with-limits.sh (512 MiB, 30 seconds)."
         );
         return Ok(());
     }
@@ -46,26 +46,37 @@ fn run() -> std::result::Result<(), String> {
             _ => i += 1,
         }
     }
-    let valid = matches!(args.first().map(String::as_str), Some("check")) && args.len() == 2
-        || matches!(args.first().map(String::as_str), Some("normalize")) && args.len() == 3;
+    let valid = matches!(
+        args.first().map(String::as_str),
+        Some("check" | "check-surface")
+    ) && args.len() == 2
+        || matches!(
+            args.first().map(String::as_str),
+            Some("normalize" | "normalize-surface")
+        ) && args.len() == 3;
     if !valid {
         return Err("usage: kamo check FILE | kamo normalize FILE NAME (see --help)".into());
     }
     let file = &args[1];
-    let input = fs::File::open(file).map_err(|e| format!("{file}: {e}"))?;
-    let mut source = String::new();
-    input
-        .take(kamo::MAX_SOURCE_BYTES as u64 + 1)
-        .read_to_string(&mut source)
-        .map_err(|e| format!("{file}: {e}"))?;
-    let program =
-        CheckedProgram::check_with(&source, options).map_err(|e| e.render(file, &source))?;
-    if args[0] == "check" {
+    let surface = args[0].ends_with("surface");
+    let program = if surface {
+        CheckedProgram::check_surface_file_with(file, options)
+            .map_err(|e| format!("{file}: {e}"))?
+    } else {
+        let input = fs::File::open(file).map_err(|e| format!("{file}: {e}"))?;
+        let mut source = String::new();
+        input
+            .take(kamo::MAX_SOURCE_BYTES as u64 + 1)
+            .read_to_string(&mut source)
+            .map_err(|e| format!("{file}: {e}"))?;
+        CheckedProgram::check_with(&source, options).map_err(|e| e.render(file, &source))?
+    };
+    if args[0] == "check" || args[0] == "check-surface" {
         println!("checked {} declarations", program.names().count());
     } else {
         let result = program
             .normalize_with(&args[2], options)
-            .map_err(|e| e.render(file, &source))?;
+            .map_err(|e| format!("{file}: {e}"))?;
         println!("{}", result.text);
         if stats {
             eprintln!("{:?}", result.statistics);
