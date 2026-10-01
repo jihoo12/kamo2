@@ -1,10 +1,10 @@
 # Universes
 
-Kamo2 uses an explicit hierarchy of cumulative universes.
+Kamo2 has an explicit hierarchy of **cumulative** universes.
 
-This document describes the intended checking discipline. Universe polymorphism
-and level inference are later elaborator features; cumulativity itself belongs
-to the type-checking relation.
+This document describes the behavior implemented by the current checker. It is
+not a proposal for changing definitional equality, and it does not introduce a
+runtime lifting operation.
 
 ## Hierarchy
 
@@ -20,7 +20,7 @@ Universes at different levels are not definitionally equal:
 U 0 != U 1
 ```
 
-Cumulativity is instead a separate admissible checking relation:
+Cumulativity is a separate checking/compatibility relation:
 
 ```text
 Gamma |- A : U i    i <= j
@@ -28,35 +28,13 @@ Gamma |- A : U i    i <= j
 Gamma |- A : U j
 ```
 
-Thus a type does not acquire a runtime wrapper or a `Lift` term when it is
-used at a larger universe.
+The implementation reflects this separation: conversion remains ordinary
+definitional equality, while compatibility additionally accepts `U i` where
+`U j` is expected when `i <= j`.
 
-## Conversion versus cumulativity
+There is no `Lift` term or runtime wrapper.
 
-Kamo currently checks many expected types through definitional conversion.
-Kamo2 should not implement cumulativity by changing conversion so that universe
-levels compare equal.
-
-Conceptually, checking uses a compatibility/subtyping judgment:
-
-```text
-A == B
-------
-A <= B
-
-i <= j
----------
-U i <= U j
-```
-
-Initially this relation should stay deliberately small: definitional equality
-plus universe cumulativity. It is not intended as a general-purpose subtyping
-system.
-
-This distinction matters for normalization and quotation: lifting a type from
-`U i` to `U j` does not change the term being evaluated.
-
-## Pi and Sigma
+## Formation levels
 
 If
 
@@ -72,103 +50,55 @@ Gamma |- (x : A) -> B : U (max i j)
 Gamma |- (x : A) *  B : U (max i j)
 ```
 
-The surface non-dependent arrow `A -> B` is the same rule with an unused
-binder.
+A path family in `U u` forms a path type in `U u`.
 
-The implementation should compute the principal level and rely on cumulativity
-when a larger expected universe is requested.
-
-## Paths
-
-For a family
-
-```text
-i : I |- A i : U u
-a0 : A 0
-a1 : A 1
-```
-
-the path type remains in `U u`:
-
-```text
-Path A a0 a1 : U u
-```
-
-Using that path type at a larger universe is handled by the same cumulative
-checking judgment. No special path-level lifting operation is introduced.
+The checker computes these principal levels and relies on universe compatibility
+when a term is checked against a larger expected universe.
 
 ## Cubical operations
 
-Kamo already evaluates composition in universes and implements `Glue`,
-`coe`/composition, and paths. Cumulativity must therefore be introduced
-without changing the semantic identity of a type.
+Universe cumulativity does not change Kamo2's Cartesian cubical semantics.
+Paths, composition, coercion, systems, and Glue continue to evaluate using the
+same core terms and values regardless of the larger universe in which a type is
+accepted.
 
-The intended invariant is:
+The invariant is:
 
 > universe lifting is a typing fact, not a new evaluated term.
 
-In particular, adding cumulativity should not add a `Lift` constructor to
-`Term` or `Val`.
+Regression tests cover cumulativity together with path, composition, and Glue
+behavior and separately verify that distinct universe levels have not become
+definitionally equal.
 
-Tests must cover paths, composition, and Glue at multiple universe levels so
-that the checker change cannot silently invalidate cubical behavior.
+## Inductive declarations
 
-## Inductive families
+User-defined inductive declarations use the same cumulative checking relation as
+the rest of the core. They do not have a separate universe-lifting mechanism.
 
-Inductive declarations are checked against the cumulative hierarchy.
+The current implementation supports explicit concrete universe levels. The
+family records a principal result level, and constructor types are checked
+against the declaration using the ordinary checker.
 
-For example, conceptually:
+Large-elimination policy for future extensions should be specified separately
+rather than being inferred from cumulativity alone.
 
-```text
-data Vec (A : U i) : Nat -> U i where
-  nil  : Vec A zero
-  cons : (n : Nat) -> A -> Vec A n -> Vec A (suc n)
-```
+## Future work: universe polymorphism
 
-A parameter inhabiting a smaller universe may be accepted where a larger
-universe is expected through cumulativity.
+Cumulativity is not universe polymorphism. Kamo2 does not yet provide level
+variables, level inference, or generalized universe-polymorphic definitions.
 
-The declaration records a principal resulting universe level rather than
-materializing arbitrary lifted copies of the family.
-
-The precise rules for large elimination remain a separate design decision and
-must be specified before general inductive elimination is implemented.
-
-## Universe polymorphism
-
-Cumulativity does not by itself provide polymorphism over levels.
-
-Eventually we want to express definitions conceptually like:
+A future elaborator may support definitions conceptually like:
 
 ```text
 id : (A : U i) -> A -> A
 ```
 
-for a level variable `i`, rather than defining one `id` per concrete level.
+with machinery for:
 
-That requires additional elaborator machinery:
+- universe level variables and metavariables;
+- constraints such as `i <= j`;
+- `max` and successor constraints;
+- generalization of unsolved level variables.
 
-- level variables/metavariables;
-- level constraints such as `i <= j`;
-- solving expressions involving `max` and successor;
-- generalization of unsolved level variables where appropriate.
-
-This is intentionally later work. The first cumulative implementation keeps
-explicit concrete `u32` levels.
-
-## Implementation order
-
-Before inductive metadata is implemented:
-
-1. introduce a small type-compatibility judgment distinct from conversion;
-2. support `U i <= U j` when `i <= j`;
-3. use compatibility when checking an inferred term against an expected type;
-4. ensure Pi/Sigma formation returns `max(i, j)`;
-5. add regression tests showing that `U i` and `U j` are still not
-   definitionally equal;
-6. add cubical regression tests across lifted universe usage.
-
-After that, inductive metadata may assume cumulative universe checking.
-
-Universe metavariables, level inference, and universe polymorphism should be
-separate later changes.
+That work should preserve the current separation between definitional equality
+and cumulative checking.

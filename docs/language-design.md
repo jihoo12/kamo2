@@ -1,25 +1,42 @@
 # Kamo2 language direction
 
-This document records the intended direction of Kamo2. It is a design target,
-not a claim that all features described here are implemented.
+This document is a **future roadmap**. For implemented behavior and the trusted
+core boundary, use [../README.md](../README.md) and [rules.md](rules.md) as the
+source of truth.
 
-Kamo2 starts from Kamo's small cubical dependent core, but aims to grow into a
-functional dependently typed language where ordinary programs, indexed data,
-and cubical equality live in one language.
+Kamo2 starts from a small Cartesian cubical dependent core and aims to grow into
+a functional dependently typed language where ordinary programs, indexed data,
+and cubical equality share one coherent elaboration pipeline.
+
+## What already exists
+
+The current system already has:
+
+- a functional surface syntax;
+- file modules and name resolution;
+- surface `data` declarations;
+- checked indexed-inductive metadata;
+- generic dependent eliminators and iota computation;
+- ordinary constructor pattern matching;
+- cumulative explicit universes;
+- the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
+
+These are current implementation facts, not future milestones.
 
 ## Design principles
 
-1. Keep the trusted cubical core small.
-2. Put convenient functional syntax and elaboration above the core.
-3. Treat equality as cubical paths rather than introducing a second equality.
-4. Make inductive families a first-class design target before committing to a
-   large pattern-matching language.
-5. Add higher inductive types only after ordinary inductive families and their
-   dependent eliminators are understood.
-6. Prefer elaboration into a small set of core concepts over adding surface
-   conveniences directly to the kernel.
+1. Keep the trusted cubical core small and auditable.
+2. Put ergonomic syntax, name resolution, and elaboration above the core.
+3. Use cubical paths as the language's equality notion rather than adding an
+   unrelated propositional equality primitive.
+4. Extend inductive families only with rules whose positivity, computation, and
+   cubical behavior can be stated precisely.
+5. Add higher inductive types only after ordinary inductive composition and
+   dependent elimination have a clear specification.
+6. Prefer elaboration into a small core over adding convenience features as
+   kernel primitives.
 
-The intended architecture is:
+The architectural direction remains:
 
 ```text
 functional surface syntax
@@ -28,175 +45,75 @@ functional surface syntax
 name resolution / elaboration
         |
         v
-inductive-family and cubical elaboration
+inductive + cubical elaboration
         |
         v
-small cubical dependent core
+small Cartesian cubical dependent core
         |
         v
 checker / evaluator
 ```
 
-The existing S-expression language remains useful as a direct representation
-of the core while the new surface language develops.
+## Cubical foundation
 
-## Milestone 1: minimal functional surface language
+Kamo2's interval syntax is Cartesian, not a De Morgan interval algebra.
 
-The first surface language should be deliberately small. Its purpose is to make
-later type-theoretic work readable, not to complete a general-purpose language
-before inductive types are designed.
+Core dimensions are endpoints or bound dimension names. Conjunction and
+disjunction live in the separate face/cofibration language; they are not
+interval connections. There is no core interval meet, join, or reversal
+operation.
 
-The initial target includes:
+See [rules.md](rules.md) for the precise distinction and the correspondence
+between the implementation and the Cartesian cubical rules.
 
-- named definitions,
-- lambda abstraction,
-- function application,
-- dependent function types,
-- non-dependent `A -> B` syntax,
-- `let`,
-- universes.
+## Near-term work
 
-For example:
+### Generic cubical composition for inductive families
 
-```text
-def id (A : Type) (x : A) : A =
-  x
+User-defined inductive families already support formation, constructors,
+dependent elimination, and iota computation, but they do not yet have generic
+structural composition.
 
-def twice (A : Type) (f : A -> A) (x : A) : A =
-  f (f x)
-```
+This is the most important remaining kernel-facing step before claiming that
+ordinary user-defined data has the same cubical stability as the primitive
+`Nat` and `Bool` cases.
 
-Surface syntax should elaborate to the existing `Pi`, `Lam`, and `App`
-core constructs wherever possible.
+The rule must account for constructor shape, recursive fields, indices, and
+dependent fields without assuming De Morgan interval operations.
 
-Pattern matching, type classes, records, broad type inference, and syntactic
-sugar are intentionally not goals of this milestone.
+### Dependent pattern matching
 
-## Milestone 2: inductive types
+Ordinary constructor matching exists. The next pattern-matching work is
+dependent refinement: matching an indexed constructor changes what is known
+about indices in the branch context.
 
-The next goal is a representation for user-defined inductive declarations.
+This should elaborate to checked elimination principles rather than become an
+independent evaluator mechanism.
 
-A desired declaration is:
+### Cubical surface syntax
 
-```text
-data Nat : Type where
-  zero : Nat
-  suc  : Nat -> Nat
-```
+The core cubical operations exist, but their surface presentation can become
+more readable.
 
-The important result is not merely constructor syntax. An inductive declaration
-must determine its constructors and a sound elimination principle.
-
-Conceptually, `Nat` should provide an eliminator of the shape:
-
-```text
-Nat.elim :
-  (P : Nat -> Type) ->
-  P zero ->
-  ((n : Nat) -> P n -> P (suc n)) ->
-  (n : Nat) ->
-  P n
-```
-
-Kamo currently has primitive `Nat`, `Bool`, and their eliminators. These may
-remain as bootstrap/reference cases while the general inductive mechanism is
-developed. Removing them from the core is a possible later simplification, not
-an immediate requirement.
-
-## Milestone 3: inductive type families
-
-The first major language milestone is an indexed family such as `Vec`:
-
-```text
-data Vec (A : Type) : Nat -> Type where
-  nil  : Vec A zero
-  cons : (n : Nat) -> A -> Vec A n -> Vec A (suc n)
-```
-
-This milestone forces the design to handle:
-
-- parameters versus indices,
-- constructor telescopes,
-- positivity,
-- universe levels,
-- dependent eliminators,
-- computation rules for eliminators.
-
-`Vec` is a better architectural test than `List`: a design that handles only
-non-indexed algebraic data is not yet sufficient for Kamo2.
-
-The kernel boundary for general inductive families is an open design decision.
-We should not assume that parsing a `data` declaration is enough. The trusted
-representation, positivity checking, elimination rules, and computation rules
-must be specified before general inductive families are accepted as kernel
-features.
-
-## Milestone 4: pattern matching
-
-User-facing pattern matching should be built after dependent elimination is
-available.
-
-For example:
-
-```text
-def add : Nat -> Nat -> Nat
-| zero,  n => n
-| suc m, n => suc (add m n)
-```
-
-Pattern matching is intended to elaborate to elimination principles rather than
-becoming an unrelated evaluator feature.
-
-Dependent pattern matching will require substantially more care than ordinary
-ML-style matching. In particular, matching on indexed constructors refines
-indices and therefore affects the typing context.
-
-Recursion should likewise preserve the normalization goals of the dependent
-core. The initial direction is structural recursion / termination checking, not
-an unrestricted fixpoint operator.
-
-## Milestone 5: cubical surface language
-
-Cubical structure should become visible when users work with equality, while
-ordinary functional programs should remain ordinary-looking.
-
-The intended equality notation is:
+A target notation is conceptually:
 
 ```text
 x == y
+
+path i => t
+
+p @ i
 ```
 
-with the meaning:
+where equality elaborates to `Path`, path abstraction to the core path
+lambda, and path application to the existing path application form.
 
-```text
-Path A x y
-```
+Transport and composition should likewise gain readable interfaces without
+forcing low-level dimension syntax into ordinary functional code.
 
-rather than a separate inductive equality type.
+### Higher inductive types
 
-Possible surface forms are:
-
-```text
-def refl (x : A) : x == x =
-  path i => x
-
-def cong (f : A -> B) (p : x == y) : f x == f y =
-  path i => f (p @ i)
-```
-
-Here `path i => t` elaborates to path abstraction and `p @ i` to path
-application.
-
-Operations such as transport and composition should have readable surface
-interfaces while elaborating to the existing cubical machinery. Low-level
-dimension expressions should not leak into ordinary programs unnecessarily.
-
-## Milestone 6: higher inductive types
-
-Higher inductive types are a goal only after ordinary inductive families have a
-clear trusted representation and elimination story.
-
-The canonical test is the circle:
+Higher inductive types remain a later goal. A declaration such as:
 
 ```text
 data Circle : Type where
@@ -204,84 +121,43 @@ data Circle : Type where
   loop : base == base
 ```
 
-Unlike an ordinary constructor, `loop` is a path constructor. Supporting it
-requires more than accepting this syntax: elimination must account for the
-path constructor and its coherence/computation behavior.
+requires boundary-aware constructor metadata and elimination/coherence rules;
+it must not be treated as an ordinary point-constructor extension.
 
-Conceptually, eliminating from `Circle` requires data corresponding to both
-the point constructor and a dependent path over `loop`.
+The existing Cartesian path, composition, coercion, and Glue machinery should
+remain the foundation for this work.
 
-Kamo's existing path, composition, coercion, and glue machinery should be
-reused rather than creating a separate HIT runtime.
+### Universe polymorphism
 
-## Core versus surface
+Universe checking is cumulative today, but levels are explicit concrete
+integers. Level variables, inference, constraint solving, and generalized
+universe-polymorphic definitions are elaborator work for a later stage.
 
-Kamo2 should avoid equating "surface feature" with "new kernel primitive."
+## Non-goals for the near term
 
-Features expected primarily in the surface/elaborator include:
+The project should avoid making the trusted core larger merely to obtain:
 
-- multi-argument definitions and lambdas,
-- arrow notation,
-- `let`,
-- pattern matching,
-- convenient equality/path notation,
-- inferred or implicit information where sound and useful.
+- unrestricted general recursion;
+- a second equality primitive unrelated to cubical paths;
+- broad global type inference;
+- convenience-only syntax that can instead elaborate to existing constructs;
+- higher inductive syntax without a specified boundary/composition/elimination
+  story.
 
-Features whose trusted representation needs explicit design include:
-
-- general inductive families,
-- positivity and universe checking for data declarations,
-- generated dependent eliminators and their computation rules,
-- higher inductive constructors,
-- HIT elimination and coherence.
-
-This boundary should be documented before each feature is implemented.
-
-## Development order
-
-The working order is:
+The next architectural tests are therefore:
 
 ```text
-minimal functional syntax
+generic inductive composition
         |
         v
-ordinary inductive declarations
+dependent pattern refinement
         |
         v
-inductive families: Vec / Fin
+ergonomic cubical surface syntax
         |
         v
-dependent eliminators
-        |
-        v
-pattern matching + structural recursion
-        |
-        v
-cubical surface syntax
-        |
-        v
-higher inductive types: Circle
+boundary-aware higher inductive types
 ```
 
-Two milestones act as architectural tests:
-
-- **Vec milestone:** indexed dependent functional programming works without
-  special-casing one family.
-- **Circle milestone:** path constructors and their dependent elimination work
-  using the cubical foundation.
-
-In short: make `Vec` principled first, then make `Circle` principled.
-
-## Near-term non-goals
-
-Until the `Vec` milestone is understood, avoid committing to:
-
-- a large ML/Haskell-style syntax,
-- unrestricted general recursion,
-- a separate propositional equality type,
-- elaborate pattern syntax,
-- aggressive global type inference,
-- a permanent ABI/API for user-defined data declarations.
-
-Keeping these decisions open gives the inductive-family and cubical designs room
-to determine the language rather than being constrained by premature syntax.
+The governing constraint is that each step should remain compatible with the
+Cartesian cubical core documented in [rules.md](rules.md).
