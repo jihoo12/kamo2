@@ -22,6 +22,41 @@ would change the specified judgmental equality. Composition across neutral
 types can remain blocked until substitution or stronger face assumptions expose
 a reducible head.
 
+
+## Cartesian interval structure versus De Morgan structure
+
+Kamo's interval expressions are deliberately small:
+
+```text
+r, s ::= 0 | 1 | i
+```
+
+where `i` is a bound dimension name. Face/cofibration formulas are a separate
+syntactic layer:
+
+```text
+phi, psi ::= top | bottom | (= r s) | (and phi psi) | (or phi psi)
+```
+
+The `and` and `or` operators above combine **face formulas**. They are not
+De Morgan connections on interval expressions. In particular, the core has no
+interval terms corresponding to `i ∧ j`, `i ∨ j`, or interval reversal
+`~i`/`1-i`.
+
+This distinction is semantically significant. A generic interval dimension is
+not treated as Boolean: `(= i 0) or (= i 1)` does not entail `top`. Diagonal
+faces such as `(= i j)`, equality transitivity, dimension substitution, and
+generic-dimension quantification are handled directly by the Cartesian face
+solver.
+
+Operations that are often written using interval connections or reversal in a
+De Morgan/CCHM presentation must therefore be built using the Cartesian
+composition primitives available here. For example, the library's path
+symmetry construction uses composition rather than an interval-reversal term.
+
+References to Cubical Agda below concern proof/construction patterns. They do
+not mean that Kamo imports Cubical Agda's De Morgan interval algebra.
+
 ## Computational univalence
 
 The library uses the ordinary definition
