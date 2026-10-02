@@ -381,6 +381,55 @@ impl Engine<'_> {
                     self.reify(k, Some(nat), face, q, depth)?,
                 )
             }
+            Val::HitElim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let declaration = self.program.inductives[inductive.index()].clone();
+                let members = declaration.constructors.higher()?.to_vec();
+                let mut parameter_terms = Vec::with_capacity(parameters.len());
+                for parameter in parameters.iter().copied() {
+                    parameter_terms.push(self.reify(parameter, None, face, q, depth)?);
+                }
+                let motive_type =
+                    self.hit_motive_type(inductive, &parameters, declaration.universe)?;
+                let motive_term = self.reify(motive, Some(motive_type), face, q, depth)?;
+                let mut method_terms = Vec::with_capacity(methods.len());
+                let mut checked_methods = Vec::with_capacity(methods.len());
+                for (method, member) in methods.iter().copied().zip(members) {
+                    let method_type = match member {
+                        crate::hit::ConstructorRef::Point(constructor) => {
+                            self.hit_point_method_type(constructor, &parameters, motive, face)?
+                        }
+                        crate::hit::ConstructorRef::Higher(constructor) => self
+                            .hit_higher_method_type(
+                                constructor,
+                                &parameters,
+                                motive,
+                                &checked_methods,
+                                face,
+                            )?,
+                    };
+                    method_terms.push(self.reify(method, Some(method_type), face, q, depth)?);
+                    checked_methods.push(method);
+                }
+                let mut index_terms = Vec::with_capacity(indices.len());
+                for index in indices {
+                    index_terms.push(self.reify(index, None, face, q, depth)?);
+                }
+                Term::HitElim {
+                    inductive,
+                    parameters: parameter_terms,
+                    motive: motive_term,
+                    methods: method_terms,
+                    indices: index_terms,
+                    scrutinee: self.reify(scrutinee, None, face, q, depth)?,
+                }
+            }
             Val::Elim { .. } => {
                 return Err(Error::plain(
                     "core quotation of ordinary eliminators is not implemented",

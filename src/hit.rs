@@ -1,7 +1,7 @@
-//! Structurally and semantically checked staging, with an explicit Slice C
-//! publication gate for one-dimensional nonrecursive signatures.
+//! Structurally and semantically checked staging, with explicit Slice C/D
+//! execution gates for one-dimensional nonrecursive signatures.
 //! Certificates borrow immutable syntax and retain no semantic arena IDs.
-//! Surface HIT declarations, elimination and HIT composition remain unavailable.
+//! Surface HIT declarations and HIT composition remain unavailable.
 #![allow(dead_code)]
 
 #[path = "hit_runtime.rs"]

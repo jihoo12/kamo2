@@ -2,7 +2,7 @@
 use crate::arena::{Arena, Key, key};
 use crate::face::{Dim, FaceId, Faces};
 use crate::hash::IdMap as HashMap;
-use crate::hit::HigherConstructorId;
+use crate::hit::{ConstructorRef, HigherConstructorId};
 use crate::syntax::{ConstructorId, D, F, InductiveId, Program, TelescopeEntry, Term, TermId};
 use crate::{Error, Result, Statistics};
 key!(ValId);
@@ -61,6 +61,14 @@ pub(crate) enum Val {
         dimensions: Vec<Dim>,
     },
     Elim {
+        inductive: InductiveId,
+        parameters: Vec<ValId>,
+        motive: ValId,
+        methods: Vec<ValId>,
+        indices: Vec<ValId>,
+        scrutinee: ValId,
+    },
+    HitElim {
         inductive: InductiveId,
         parameters: Vec<ValId>,
         motive: ValId,
@@ -479,6 +487,30 @@ impl<'a> Engine<'a> {
                     .collect(),
                 scrutinee: self.sub(scrutinee, s),
             },
+            Val::HitElim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::HitElim {
+                inductive,
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.sub(parameter, s))
+                    .collect(),
+                motive: self.sub(motive, s),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.sub(method, s))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.sub(index, s))
+                    .collect(),
+                scrutinee: self.sub(scrutinee, s),
+            },
             Val::PApp(p, d) => Val::PApp(self.sub(p, s), self.sub_dim(s, d)),
             Val::System(a, bs) => {
                 let a = self.sub(a, s);
@@ -577,6 +609,30 @@ impl<'a> Engine<'a> {
                 indices,
                 scrutinee,
             } => Val::Elim {
+                inductive,
+                parameters: parameters
+                    .into_iter()
+                    .map(|parameter| self.thunk(parameter, e))
+                    .collect(),
+                motive: self.thunk(motive, e),
+                methods: methods
+                    .into_iter()
+                    .map(|method| self.thunk(method, e))
+                    .collect(),
+                indices: indices
+                    .into_iter()
+                    .map(|index| self.thunk(index, e))
+                    .collect(),
+                scrutinee: self.thunk(scrutinee, e),
+            },
+            Term::HitElim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => Val::HitElim {
                 inductive,
                 parameters: parameters
                     .into_iter()
@@ -790,6 +846,24 @@ impl<'a> Engine<'a> {
                     scrutinee: x,
                 },
                 Val::Elim {
+                    inductive: j,
+                    parameters: qs,
+                    motive: q,
+                    methods: ns,
+                    indices: js,
+                    scrutinee: y,
+                },
+            )
+            | (
+                Val::HitElim {
+                    inductive: i,
+                    parameters: ps,
+                    motive: p,
+                    methods: ms,
+                    indices: is,
+                    scrutinee: x,
+                },
+                Val::HitElim {
                     inductive: j,
                     parameters: qs,
                     motive: q,
@@ -1052,6 +1126,90 @@ impl<'a> Engine<'a> {
                     }
                     Some(method)
                 }
+                Val::HitElim {
+                    inductive,
+                    parameters: _,
+                    motive: _,
+                    methods,
+                    indices: _,
+                    scrutinee,
+                } => {
+                    let family = self
+                        .program
+                        .inductives
+                        .get(inductive.index())
+                        .ok_or_else(|| Error::plain("missing HIT eliminator family"))?
+                        .clone();
+                    let members = family.constructors.higher()?.to_vec();
+                    let scrutinee = self.force(scrutinee, face)?;
+                    match self.get(scrutinee) {
+                        Val::HigherApp {
+                            constructor,
+                            arguments,
+                            dimensions,
+                            ..
+                        } => {
+                            let higher = self.program.higher_constructor(constructor)?;
+                            if higher.inductive != inductive {
+                                return Err(Error::plain(
+                                    "internal error: higher constructor belongs to another family",
+                                ));
+                            }
+                            let method_index = members
+                                .iter()
+                                .position(|member| *member == ConstructorRef::Higher(constructor))
+                                .ok_or_else(|| {
+                                    Error::plain(
+                                        "internal error: higher constructor missing from its HIT family",
+                                    )
+                                })?;
+                            let mut method = *methods.get(method_index).ok_or_else(|| {
+                                Error::plain("internal error: missing HIT eliminator method")
+                            })?;
+                            for argument in arguments {
+                                method = self.app(method, argument);
+                            }
+                            for dimension in dimensions {
+                                method = self.at(method, dimension);
+                            }
+                            Some(method)
+                        }
+                        _ => {
+                            let (head, spine) = self.application_spine_forced(scrutinee, face)?;
+                            let Val::Constructor(constructor_id) = self.get(head) else {
+                                break;
+                            };
+                            let constructor =
+                                self.program.constructors[constructor_id.index()].clone();
+                            if constructor.inductive != inductive {
+                                return Err(Error::plain(
+                                    "internal error: HIT eliminator point belongs to another family",
+                                ));
+                            }
+                            let parameter_count = family.parameters.len();
+                            if spine.len() != parameter_count + constructor.arguments.len() {
+                                return Err(Error::plain(
+                                    "internal error: malformed point application in HIT eliminator",
+                                ));
+                            }
+                            let method_index = members
+                                .iter()
+                                .position(|member| *member == ConstructorRef::Point(constructor_id))
+                                .ok_or_else(|| {
+                                    Error::plain(
+                                        "internal error: point constructor missing from its HIT family",
+                                    )
+                                })?;
+                            let mut method = *methods.get(method_index).ok_or_else(|| {
+                                Error::plain("internal error: missing HIT eliminator method")
+                            })?;
+                            for argument in spine.into_iter().skip(parameter_count) {
+                                method = self.app(method, argument);
+                            }
+                            Some(method)
+                        }
+                    }
+                }
                 Val::PApp(p, d) => {
                     let p = self.force(p, face)?;
                     if let Val::PLam(b) = self.get(p) {
@@ -1291,6 +1449,12 @@ impl<'a> Engine<'a> {
             }
             Val::If(p, _, _, c) | Val::NatElim(p, _, _, c) => Ok(self.app(p, c)),
             Val::Elim {
+                motive,
+                indices,
+                scrutinee,
+                ..
+            }
+            | Val::HitElim {
                 motive,
                 indices,
                 scrutinee,

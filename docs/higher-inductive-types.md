@@ -1,11 +1,12 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **Slices A/B/C implemented**, with an internal one-dimensional,
-nonrecursive higher-application and boundary-reduction fragment. HIT elimination,
-HIT composition, mixed Ordinary/Higher signature imports, and surface HIT
-declarations remain unimplemented. Ordinary inductives and homogeneous surface
-paths are implemented; they do not already provide higher constructors. The
-new core fragment changes no mathematical behavior of existing ordinary programs.
+Status: **Slices A/B/C/D implemented**, with an internal one-dimensional,
+nonrecursive higher-application, boundary-reduction, and dependent-elimination
+fragment. HIT composition, mixed Ordinary/Higher signature imports, and surface
+HIT declarations remain unimplemented. Ordinary inductives and homogeneous
+surface paths are implemented; they do not already provide higher constructors.
+The new core fragment changes no mathematical behavior of existing ordinary
+programs.
 
 ## Existing boundary and required audit obligations
 
@@ -37,13 +38,14 @@ In particular:
   disjunction. Neither the syntax nor the solver supplies interval connections,
   reversal, or a principle that all dimensions are endpoints.
 
-The audit's four remaining blockers are requirements: checked boundaries
-(Slices A/B), eliminator coherence (D), a separately justified HIT composition
-schema (E), and explicit acknowledgment that testing is not a mechanized
-metatheory. Nothing here discharges the last requirement by analogy to a
-De Morgan cubical implementation. The earlier substitution/face audit also
-requires reduction and conversion to remain stable under simultaneous
-substitution of terms, dimensions, and faces.
+The audit requirements are checked boundaries (Slices A/B), eliminator
+coherence (D), a separately justified HIT composition schema (E), and explicit
+acknowledgment that testing is not a mechanized metatheory. A/B and the gated
+one-dimensional nonrecursive D fragment are now implemented; E remains open.
+Nothing here discharges the metatheoretic requirement by analogy to a De Morgan
+cubical implementation. The earlier substitution/face audit also requires
+reduction and conversion to remain stable under simultaneous substitution of
+terms, dimensions, and faces.
 
 ## Representation decision
 
@@ -442,7 +444,7 @@ injective: boundary reduction may equate distinct heads. Quotation must retain
 generic dimension arguments and be recheckable. Cache keys must preserve face
 context and substituted arguments. These cases are implemented in C; higher elimination and Kan rules remain future work.
 
-## Dependent elimination and coherence (future Slice D)
+## Dependent elimination and coherence (Slice D implemented)
 
 For `P : (x : Circle) -> U u`, the intended methods are exactly:
 
@@ -464,13 +466,13 @@ constant `P base`. Current homogeneous surface syntax cannot state this general
 dependent method type; kernel generation/checking can use `Term::Path` directly.
 No new equality primitive or proof-irrelevant coherence field is proposed.
 
-Choose a separate future `HitElim` term/value form with the current `Elim`
+Slice D uses a separate `HitElim` term/value form with the current `Elim`
 payload shape (owner, parameters, motive, ordered methods, indices, scrutinee),
-but methods ordered by the tagged full constructor list. The checker derives
+with methods ordered by the tagged full constructor list. The checker derives
 every expected method type; it never trusts a supplied method-type certificate.
-For Circle it requires both methods even when the scrutinee is `base`. Reuse
-ordinary point method generation only behind this HIT-aware checker. Ordinary
-matching must not expose a supposedly exhaustive single `base` branch.
+For Circle it requires both methods even when the scrutinee is `base`. Ordinary
+point method generation is reused only behind this HIT-aware checker. Ordinary
+matching still cannot expose a supposedly exhaustive single `base` branch.
 
 For a family `D p z`, use motive `P : (z : Indices p) -> D p z -> U u`.
 After binding a constructor's arguments, its method is a section, at generic
@@ -494,11 +496,12 @@ a checked facet-assembly procedure. Such declarations remain metadata-only
 until that procedure and multi-dimensional elimination are justified. Circle
 requires neither a new partial-element type nor that extension.
 
-Universe checking must check `P` and both methods with ordinary cumulative
-compatibility; do not equate universe levels. The intended Circle eliminator is
-universe-polymorphic at the schema level for each explicit `u`. Slice D must
-review and document this large-elimination policy explicitly; the ordinary
-roadmap's unresolved general policy is not a proof for arbitrary HITs.
+Universe checking uses ordinary cumulative compatibility; universe levels are
+not equated. The implemented Slice D gate is deliberately conservative: the
+motive is checked against the HIT family's declared universe, so motives in lower
+universes are admitted cumulatively while elimination into a higher universe is
+not. General large elimination and an explicitly universe-polymorphic HIT schema
+remain future work.
 
 ## Intended computation, separated by responsibility
 
@@ -641,8 +644,9 @@ IDs across checking sessions.
 
 ## Staged implementation plan and acceptance gates
 
-Slices A/B retain staging validation. C adds a gated internal executable fragment.
-Slices D–F remain future work.
+Slices A/B retain staging validation. C adds a gated internal executable fragment,
+and D adds gated dependent elimination for that same one-dimensional
+nonrecursive fragment. Slices E–F remain future work.
 
 ### HIT Slice A — structurally checked metadata only
 
@@ -718,17 +722,19 @@ signatures, two-dimensional publication rejection and runtime resource errors.
 Surface Circle and surface ordinary matching on Higher families remain rejected.
 Run `cargo test hit::runtime --locked` for the focused C tests.
 
-No HIT eliminator, HIT composition, parser extension, or surface HIT declaration
-is included. This intermediate core is not a complete computational HIT calculus.
+No HIT composition, parser extension, or surface HIT declaration is included.
+This intermediate core is not a complete computational HIT calculus.
 
 ### HIT Slice D — dependent eliminator coherence
 
-Add `HitElim`, full tagged method ordering, and generated Circle method type
-`Path i (P (loop @ i)) base_case base_case`. Document the explicit universe
-policy. Implement point iota and higher-method application; reject missing or
-wrong endpoint methods. Test a genuinely dependent motive and both paths around
-the endpoint computation diamond. Compositions may remain blocked at this
-intermediate stage; do not call this a complete computational HIT calculus.
+Implemented: `HitElim`, full tagged method ordering, and generated one-dimensional
+higher-method types. For Circle the generated coherence method is exactly
+`Path i (P (loop @ i)) base_case base_case`. The evaluator implements point
+iota and higher-method application, while the checker rejects missing or
+ill-typed coherence methods. Regression tests use a genuinely dependent motive,
+exercise both optimized/reference modes, and compare both paths around the
+endpoint computation diamond. The universe policy is the conservative family-
+universe policy described above. HIT composition remains blocked.
 
 ### HIT Slice E — Cartesian composition integration
 

@@ -5,8 +5,17 @@ pub(crate) use hit_semantic::validate as validate_higher;
 use crate::arena::Key;
 use crate::eval::{Binder, Engine, Env, EnvId, Val, ValId};
 use crate::face::{Dim, FaceId};
+use crate::hit::ConstructorRef;
 use crate::syntax::{Term, TermId};
 use crate::{Error, Result};
+
+fn require_hit_member(members: &[ConstructorRef], member: ConstructorRef) -> Result<()> {
+    if members.contains(&member) {
+        Ok(())
+    } else {
+        Err(Error::plain("constructor is missing from its HIT family"))
+    }
+}
 
 #[derive(Clone)]
 struct Context {
@@ -365,6 +374,88 @@ impl Engine<'_> {
                         ctx.face,
                     )?;
                     self.check(method, method_type, ctx)?;
+                }
+
+                let mut result = motive_value;
+                for index in index_values {
+                    result = self.app(result, index);
+                }
+                let scrutinee = self.thunk(scrutinee, ctx.env);
+                return Ok(self.app(result, scrutinee));
+            }
+            Term::HitElim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let declaration = self.program.inductives[inductive.index()].clone();
+                let members = declaration.constructors.higher()?.to_vec();
+                if parameters.len() != declaration.parameters.len() {
+                    return Err(self.error(t, "wrong number of HIT parameters"));
+                }
+                if indices.len() != declaration.indices.len() {
+                    return Err(self.error(t, "wrong number of HIT indices"));
+                }
+                if methods.len() != members.len() {
+                    return Err(self.error(t, "wrong number of HIT eliminator methods"));
+                }
+
+                let mut family = self.alloc(Val::Inductive(inductive));
+                let mut parameter_values = Vec::with_capacity(parameters.len());
+                for parameter in parameters {
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed HIT parameter telescope"));
+                    };
+                    self.check(parameter, domain, ctx)?;
+                    let parameter = self.thunk(parameter, ctx.env);
+                    parameter_values.push(parameter);
+                    family = self.app(family, parameter);
+                }
+
+                let mut index_values = Vec::with_capacity(indices.len());
+                for index in indices {
+                    let family_ty = self.neutral_type(family, ctx.face)?;
+                    let family_ty = self.force(family_ty, ctx.face)?;
+                    let Val::Pi(domain, _) = self.get(family_ty) else {
+                        return Err(self.error(t, "malformed HIT index telescope"));
+                    };
+                    self.check(index, domain, ctx)?;
+                    let index = self.thunk(index, ctx.env);
+                    index_values.push(index);
+                    family = self.app(family, index);
+                }
+                self.check(scrutinee, family, ctx)?;
+
+                let motive_type =
+                    self.hit_motive_type(inductive, &parameter_values, declaration.universe)?;
+                self.check(motive, motive_type, ctx)?;
+                let motive_value = self.thunk(motive, ctx.env);
+
+                let method_terms = methods.clone();
+                let mut checked_methods = Vec::with_capacity(method_terms.len());
+                for (method, member) in method_terms.into_iter().zip(members) {
+                    let method_type = match member {
+                        ConstructorRef::Point(constructor) => self.hit_point_method_type(
+                            constructor,
+                            &parameter_values,
+                            motive_value,
+                            ctx.face,
+                        )?,
+                        ConstructorRef::Higher(constructor) => self.hit_higher_method_type(
+                            constructor,
+                            &parameter_values,
+                            motive_value,
+                            &checked_methods,
+                            ctx.face,
+                        )?,
+                    };
+                    self.check(method, method_type, ctx)?;
+                    checked_methods.push(self.thunk(method, ctx.env));
                 }
 
                 let mut result = motive_value;
@@ -738,6 +829,149 @@ impl Engine<'_> {
         }
 
         Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
+    }
+
+    pub(crate) fn hit_point_method_type(
+        &mut self,
+        constructor_id: crate::syntax::ConstructorId,
+        parameters: &[ValId],
+        motive: ValId,
+        face: FaceId,
+    ) -> Result<ValId> {
+        let constructor = self.program.constructors[constructor_id.index()].clone();
+        let family = &self.program.inductives[constructor.inductive.index()];
+        require_hit_member(
+            family.constructors.higher()?,
+            ConstructorRef::Point(constructor_id),
+        )?;
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_generic_method_arguments(&constructor, parameters, motive, face, 0, env)
+    }
+
+    pub(crate) fn hit_higher_method_type(
+        &mut self,
+        constructor_id: crate::hit::HigherConstructorId,
+        parameters: &[ValId],
+        motive: ValId,
+        checked_methods: &[ValId],
+        face: FaceId,
+    ) -> Result<ValId> {
+        let constructor = self.program.higher_constructor(constructor_id)?.clone();
+        let family = self.program.inductives[constructor.inductive.index()].clone();
+        require_hit_member(
+            family.constructors.higher()?,
+            ConstructorRef::Higher(constructor_id),
+        )?;
+        if constructor.dimensions.len() != 1 {
+            return Err(Error::plain(
+                "Slice D HIT elimination supports exactly one dimension",
+            ));
+        }
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        self.bind_hit_higher_method_arguments(&constructor, motive, checked_methods, face, 0, env)
+    }
+
+    fn bind_hit_higher_method_arguments(
+        &mut self,
+        constructor: &crate::hit::HigherConstructorDecl,
+        motive: ValId,
+        checked_methods: &[ValId],
+        face: FaceId,
+        index: usize,
+        env: EnvId,
+    ) -> Result<ValId> {
+        if index == constructor.arguments.len() {
+            let values = self.environment(env).terms;
+            let parameter_count = self.program.inductives[constructor.inductive.index()]
+                .parameters
+                .len();
+            let parameters = values[..parameter_count].to_vec();
+            let arguments = values[parameter_count..].to_vec();
+            let dimension = self.fresh_dim();
+            let mut body_env = self.environment(env);
+            body_env.dims.push(Dim::Var(dimension));
+            let body_env = self.env(body_env);
+
+            let indices = constructor
+                .result_indices
+                .iter()
+                .map(|index| self.thunk(*index, body_env))
+                .collect::<Vec<_>>();
+            let higher = self.alloc(Val::HigherApp {
+                constructor: constructor.id,
+                parameters: parameters.clone(),
+                arguments,
+                dimensions: vec![Dim::Var(dimension)],
+            });
+
+            let mut family = motive;
+            for index in &indices {
+                family = self.app(family, *index);
+            }
+            family = self.app(family, higher);
+
+            let eliminator = self.alloc(Val::HitElim {
+                inductive: constructor.inductive,
+                parameters: parameters.clone(),
+                motive,
+                methods: checked_methods.to_vec(),
+                indices,
+                scrutinee: higher,
+            });
+            let left = self.restrict(eliminator, dimension, Dim::Zero);
+            let left = self.force(left, face)?;
+            let right = self.restrict(eliminator, dimension, Dim::One);
+            let right = self.force(right, face)?;
+            return Ok(self.alloc(Val::Path(
+                Binder {
+                    var: dimension,
+                    body: family,
+                },
+                left,
+                right,
+            )));
+        }
+
+        let domain = self.thunk(constructor.arguments[index].ty, env);
+        let var = self.fresh_term();
+        let value = self.alloc(Val::Var(var, Some(domain)));
+        let mut next = self.environment(env);
+        next.terms.push(value);
+        let next = self.env(next);
+        let body = self.bind_hit_higher_method_arguments(
+            constructor,
+            motive,
+            checked_methods,
+            face,
+            index + 1,
+            next,
+        )?;
+        Ok(self.alloc(Val::Pi(domain, Binder { var, body })))
+    }
+
+    pub(crate) fn hit_motive_type(
+        &mut self,
+        inductive: crate::syntax::InductiveId,
+        parameters: &[ValId],
+        universe: u32,
+    ) -> Result<ValId> {
+        let declaration = self.program.inductives[inductive.index()].clone();
+        declaration.constructors.higher()?;
+        let mut env = Env::default();
+        env.terms.extend_from_slice(parameters);
+        let env = self.env(env);
+        Ok(self.bind_generic_motive_indices(
+            inductive,
+            parameters,
+            &declaration.indices,
+            0,
+            env,
+            universe,
+        ))
     }
 
     pub(crate) fn generic_motive_type(

@@ -1,4 +1,4 @@
-//! Slice C publication and runtime helpers. No higher eliminator or Kan rule.
+//! Slice C publication/runtime helpers plus Slice D HIT elimination support. No HIT Kan rule.
 #[cfg(test)]
 #[path = "hit_runtime_tests.rs"]
 mod tests;
@@ -430,6 +430,37 @@ fn validate_runtime_terms(program: &Program) -> Result<()> {
                             .ok_or_else(|| Error::plain("missing eliminator family"))?
                             .constructors
                             .ordinary()?;
+                        for t in parameters
+                            .iter()
+                            .chain(methods)
+                            .chain(indices)
+                            .chain([motive, scrutinee])
+                        {
+                            child(*t, scope);
+                        }
+                    }
+                    Term::HitElim {
+                        inductive,
+                        parameters,
+                        motive,
+                        methods,
+                        indices,
+                        scrutinee,
+                    } => {
+                        let family = program
+                            .inductives
+                            .get(inductive.index())
+                            .ok_or_else(|| Error::plain("missing HIT eliminator family"))?;
+                        let members = family.constructors.higher()?;
+                        require(
+                            methods.len() == members.len(),
+                            "wrong number of HIT eliminator methods",
+                        )?;
+                        require(
+                            parameters.len() == family.parameters.len()
+                                && indices.len() == family.indices.len(),
+                            "HIT eliminator arity mismatch",
+                        )?;
                         for t in parameters
                             .iter()
                             .chain(methods)

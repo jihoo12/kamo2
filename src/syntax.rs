@@ -57,6 +57,15 @@ pub(crate) enum Term {
         indices: Vec<TermId>,
         scrutinee: TermId,
     },
+    #[allow(dead_code)] // Internal Slice D form; surface HIT elimination is still unavailable.
+    HitElim {
+        inductive: InductiveId,
+        parameters: Vec<TermId>,
+        motive: TermId,
+        methods: Vec<TermId>,
+        indices: Vec<TermId>,
+        scrutinee: TermId,
+    },
     Zero,
     Suc(TermId),
     NatElim(TermId, TermId, TermId, TermId),
@@ -132,6 +141,14 @@ impl FamilyConstructors {
             )),
         }
     }
+    pub(crate) fn higher(&self) -> Result<&[ConstructorRef]> {
+        match self {
+            Self::Higher(ids) => Ok(ids),
+            Self::Ordinary(_) => Err(Error::plain(
+                "HIT operation on Ordinary family is forbidden",
+            )),
+        }
+    }
     pub(crate) fn is_higher(&self) -> bool {
         matches!(self, Self::Higher(_))
     }
@@ -154,8 +171,12 @@ impl Program {
     pub(crate) fn validate_inductives(&self) -> Result<()> {
         if !self.higher.is_empty()
             || self.inductives.iter().any(|f| f.constructors.is_higher())
-            || (0..self.terms.len())
-                .any(|i| matches!(self.terms.get(TermId::new(i)).term, Term::HigherApp { .. }))
+            || (0..self.terms.len()).any(|i| {
+                matches!(
+                    self.terms.get(TermId::new(i)).term,
+                    Term::HigherApp { .. } | Term::HitElim { .. }
+                )
+            })
         {
             return crate::hit::validate_executable(self);
         }

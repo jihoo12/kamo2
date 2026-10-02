@@ -95,6 +95,166 @@ fn circle_path_checks_quotes_and_endpoints_compute_in_both_modes() {
 }
 
 #[test]
+fn dependent_circle_eliminator_checks_and_computes_in_both_modes() {
+    for optimized in [false, true] {
+        let mut p = circle();
+        let circle = p.alloc(Term::Inductive(InductiveId::new(0)), 0);
+        let base = p.alloc(Term::Constructor(ConstructorId::new(0)), 0);
+
+        // P x = Path _ Circle x x. This motive genuinely depends on x.
+        let x = p.alloc(Term::Var(0), 0);
+        let refl_at_x = p.alloc(Term::Path(circle, x, x), 0);
+        let motive = p.alloc(Term::Lam(refl_at_x), 0);
+
+        // base_case = refl base.
+        let base_case = p.alloc(Term::PLam(base), 0);
+
+        // loop_case i = refl (loop @ i). Inside the nested path abstraction,
+        // Bound(1) is the outer coherence dimension.
+        let loop_at_i = app(&mut p, D::Bound(1));
+        let refl_loop_at_i = p.alloc(Term::PLam(loop_at_i), 0);
+        let loop_case = p.alloc(Term::PLam(refl_loop_at_i), 0);
+
+        let result_at_base = p.alloc(Term::Path(circle, base, base), 0);
+        let elim_base = p.alloc(
+            Term::HitElim {
+                inductive: InductiveId::new(0),
+                parameters: vec![],
+                motive,
+                methods: vec![base_case, loop_case],
+                indices: vec![],
+                scrutinee: base,
+            },
+            0,
+        );
+        p.push_decl("elimBase".into(), result_at_base, elim_base);
+
+        // The generic eliminator along loop has exactly the generated
+        // dependent coherence type Path i (P (loop @ i)) base_case base_case.
+        let loop_for_family = app(&mut p, D::Bound(0));
+        let family_along_loop = p.alloc(Term::Path(circle, loop_for_family, loop_for_family), 0);
+        let elim_loop_type = p.alloc(Term::Path(family_along_loop, base_case, base_case), 0);
+        let loop_scrutinee = app(&mut p, D::Bound(0));
+        let elim_loop_body = p.alloc(
+            Term::HitElim {
+                inductive: InductiveId::new(0),
+                parameters: vec![],
+                motive,
+                methods: vec![base_case, loop_case],
+                indices: vec![],
+                scrutinee: loop_scrutinee,
+            },
+            0,
+        );
+        let elim_loop = p.alloc(Term::PLam(elim_loop_body), 0);
+        p.push_decl("elimLoop".into(), elim_loop_type, elim_loop);
+
+        let elim_loop_global = p.alloc(Term::Global(1), 0);
+        let loop_left = p.alloc(Term::PApp(elim_loop_global, D::Zero), 0);
+        p.push_decl("elimLoopLeft".into(), result_at_base, loop_left);
+        let elim_loop_global = p.alloc(Term::Global(1), 0);
+        let loop_right = p.alloc(Term::PApp(elim_loop_global, D::One), 0);
+        p.push_decl("elimLoopRight".into(), result_at_base, loop_right);
+
+        let checked = CheckedProgram::check_program(
+            p,
+            Options {
+                optimized,
+                ..Options::default()
+            },
+        )
+        .unwrap();
+
+        // Check the endpoint diamond explicitly. First reduce HitElim at a
+        // generic loop point and only then restrict the result; compare that
+        // with restricting the eliminator first, which exposes base and uses
+        // point iota.
+        {
+            let mut e = Engine::new(&checked.program, optimized, 100_000, 100_000);
+            let top = e.faces.top();
+            let env = e.env(crate::eval::Env::default());
+            let elim_loop = e.thunk(checked.program.decls[1].body, env);
+            let elim_loop = e.force(elim_loop, top).unwrap();
+            let Val::PLam(binder) = e.get(elim_loop) else {
+                panic!("expected eliminator path");
+            };
+            let dimension = e.fresh_dim();
+            let generic = e.inst_dim(&binder, Dim::Var(dimension));
+            let higher_first = e.force(generic, top).unwrap();
+            for endpoint in [Dim::Zero, Dim::One] {
+                let higher_then_endpoint = e.restrict(higher_first, dimension, endpoint);
+                let higher_then_endpoint = e.force(higher_then_endpoint, top).unwrap();
+                let boundary_then_point = e.restrict(generic, dimension, endpoint);
+                let boundary_then_point = e.force(boundary_then_point, top).unwrap();
+                let ty = e.thunk(checked.program.decls[0].ty, env);
+                assert!(
+                    e.conv(higher_then_endpoint, boundary_then_point, Some(ty), top)
+                        .unwrap()
+                );
+            }
+        }
+
+        let opts = Options {
+            optimized,
+            ..Options::default()
+        };
+        let base_text = checked.normalize_with("elimBase", opts).unwrap().text;
+        assert_eq!(base_text, "(path i0 base)");
+        let loop_text = checked.normalize_with("elimLoop", opts).unwrap().text;
+        assert!(loop_text.contains("(higher loop () (i0))"), "{loop_text}");
+        assert_eq!(
+            checked.normalize_with("elimLoopLeft", opts).unwrap().text,
+            base_text
+        );
+        assert_eq!(
+            checked.normalize_with("elimLoopRight", opts).unwrap().text,
+            base_text
+        );
+    }
+}
+
+#[test]
+fn hit_eliminator_rejects_missing_and_noncoherent_methods() {
+    for variant in 0..2 {
+        let mut p = circle();
+        let circle = p.alloc(Term::Inductive(InductiveId::new(0)), 0);
+        let base = p.alloc(Term::Constructor(ConstructorId::new(0)), 0);
+        let nat = p.alloc(Term::Nat, 0);
+        let motive = p.alloc(Term::Lam(nat), 0);
+        let zero = p.alloc(Term::Zero, 0);
+        let methods = if variant == 0 {
+            vec![zero]
+        } else {
+            // The higher method must be a path coherence, not another point method.
+            vec![zero, zero]
+        };
+        let elim = p.alloc(
+            Term::HitElim {
+                inductive: InductiveId::new(0),
+                parameters: vec![],
+                motive,
+                methods,
+                indices: vec![],
+                scrutinee: base,
+            },
+            0,
+        );
+        p.push_decl("badHitElim".into(), nat, elim);
+        let error = CheckedProgram::check_program(p, Options::default()).unwrap_err();
+        assert!(
+            error.message.contains(if variant == 0 {
+                "wrong number of HIT eliminator methods"
+            } else {
+                "type mismatch"
+            }),
+            "{}",
+            error.message
+        );
+        let _ = circle;
+    }
+}
+
+#[test]
 fn force_caches_faces_separately_and_conversion_splits_covers() {
     for optimized in [false, true] {
         let p = circle();
@@ -704,12 +864,33 @@ fn structured_quotation_preserves_blocked_higher_composition() {
 }
 
 #[test]
-fn higher_term_cannot_bypass_validation_in_an_ordinary_program_on_bot() {
+fn higher_terms_cannot_bypass_validation_in_an_ordinary_program_on_bot() {
     let mut p = Program::default();
     let bool_ty = p.alloc(Term::Bool, 0);
     let tv = p.alloc(Term::True, 0);
     let bad = app(&mut p, D::Zero);
     let body = p.alloc(Term::System(bool_ty, vec![(F::Top, tv), (F::Bot, bad)]), 0);
     p.push_decl("bad".into(), bool_ty, body);
+    assert!(CheckedProgram::check_program(p, Options::default()).is_err());
+
+    let mut p = Program::default();
+    let bool_ty = p.alloc(Term::Bool, 0);
+    let tv = p.alloc(Term::True, 0);
+    let forged = p.alloc(
+        Term::HitElim {
+            inductive: InductiveId::new(0),
+            parameters: vec![],
+            motive: bool_ty,
+            methods: vec![],
+            indices: vec![],
+            scrutinee: tv,
+        },
+        0,
+    );
+    let body = p.alloc(
+        Term::System(bool_ty, vec![(F::Top, tv), (F::Bot, forged)]),
+        0,
+    );
+    p.push_decl("badHitElim".into(), bool_ty, body);
     assert!(CheckedProgram::check_program(p, Options::default()).is_err());
 }

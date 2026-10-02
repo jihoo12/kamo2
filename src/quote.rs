@@ -289,6 +289,55 @@ impl Engine<'_> {
                     index_terms.join(" "),
                 )
             }
+            Val::HitElim {
+                inductive,
+                parameters,
+                motive,
+                methods,
+                indices,
+                scrutinee,
+            } => {
+                let family = self.program.inductives[inductive.index()].name.clone();
+                let declaration = self.program.inductives[inductive.index()].clone();
+                let members = declaration.constructors.higher()?.to_vec();
+                let mut parameter_terms = Vec::with_capacity(parameters.len());
+                for parameter in parameters.iter().copied() {
+                    parameter_terms.push(self.quote_inner(parameter, None, face, n)?);
+                }
+                let motive_type =
+                    self.hit_motive_type(inductive, &parameters, declaration.universe)?;
+                let motive_term = self.quote_inner(motive, Some(motive_type), face, n)?;
+                let mut method_terms = Vec::with_capacity(methods.len());
+                let mut checked_methods = Vec::with_capacity(methods.len());
+                for (method, member) in methods.iter().copied().zip(members) {
+                    let method_type = match member {
+                        crate::hit::ConstructorRef::Point(constructor) => {
+                            self.hit_point_method_type(constructor, &parameters, motive, face)?
+                        }
+                        crate::hit::ConstructorRef::Higher(constructor) => self
+                            .hit_higher_method_type(
+                                constructor,
+                                &parameters,
+                                motive,
+                                &checked_methods,
+                                face,
+                            )?,
+                    };
+                    method_terms.push(self.quote_inner(method, Some(method_type), face, n)?);
+                    checked_methods.push(method);
+                }
+                let mut index_terms = Vec::with_capacity(indices.len());
+                for index in indices {
+                    index_terms.push(self.quote_inner(index, None, face, n)?);
+                }
+                let scrutinee = self.quote_inner(scrutinee, None, face, n)?;
+                format!(
+                    "(hit-elim {family} (params {}) {motive_term} (methods {}) (indices {}) {scrutinee})",
+                    parameter_terms.join(" "),
+                    method_terms.join(" "),
+                    index_terms.join(" "),
+                )
+            }
             Val::NatElim(p, z, s, k) => {
                 let nat = self.alloc(Val::Nat);
                 let x = self.variable(nat);
