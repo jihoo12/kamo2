@@ -1,10 +1,10 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **design only; no HIT metadata or executable HIT semantics implemented**.
-This proposal uses Circle to fix the trusted representation before implementing
-evaluation, elimination, composition, or surface HIT declarations. Ordinary
-inductives and homogeneous surface paths are implemented; they do not already
-provide higher constructors. No runtime behavior changes with this document.
+Status: **Slice A implemented: structurally checked staging metadata only**.
+Semantic HIT checking, evaluation, elimination, composition, and surface HIT
+declarations remain unimplemented. Ordinary inductives and homogeneous surface
+paths are implemented; they do not already provide higher constructors. The
+staging subsystem changes no mathematical behavior of existing programs.
 
 ## Existing boundary and required audit obligations
 
@@ -47,8 +47,8 @@ substitution of terms, dimensions, and faces.
 ## Representation decision
 
 Choose **separate point and higher constructor records and ID spaces**, with a
-single ordered, tagged membership list on a HIT family. The following is a
-proposed schema, not Rust added by this change:
+single ordered, tagged membership list on a HIT family. The following is the
+eventual integrated schema; Slice A keeps its HIT side in separate staging tables:
 
 ```text
 ConstructorRef = Point(ConstructorId) | Higher(HigherConstructorId)
@@ -100,6 +100,86 @@ signatures must be distinct API states. Only the last state can later authorize
 HIT terms. Slice A metadata must remain in a staging container excluded from
 `CheckedProgram` execution; it is not a certificate of a new type. Publication
 is atomic after validation, with no mutable metadata behind the certificate.
+
+### Implemented Slice A staging gate
+
+`src/hit.rs` defines `RawHigherMetadata` with its own term arena, point table
+(reusing `ConstructorDecl`), higher table, and `HigherFamilyDecl` table. Each
+staged family has one ordered `Vec<ConstructorRef>`; higher IDs have a distinct
+Rust type from point IDs. All IDs resolve locally within these staging tables.
+There is no associated executable `Program` to accidentally run as a point-only
+version of a staged family. The module is crate-private and intentionally has
+no production consumer yet.
+
+`RawHigherMetadata::validate(&self)` returns a
+`StructurallyCheckedHigherMetadata<'_>` only after the entire structural pass
+succeeds. The certificate's private field holds an immutable borrow of the raw
+arena and all its tables; Rust prevents mutation for the certificate's lifetime.
+Accessors expose only shared slices. Neither type converts into `Program` or
+`CheckedProgram`, and neither is accepted by the checker/evaluator. This is an
+API gate, not a promise that callers will remember to skip HIT evaluation.
+
+The consumer audit covered `validate_inductives`, semantic declaration checking,
+generic eliminator checking and method generation, evaluator iota and
+`compose_inductive`, constructor conversion/type recovery, quotation of heads
+and eliminator methods, and surface constructor resolution, matching and
+exhaustiveness. All consume the unchanged ordinary `Program` tables. No changes
+were needed in those consumers. The eventual `FamilyConstructors` migration
+above belongs to B/C integration, together with semantic certification and
+ordinary-only dispatch gates; Slice A does not change
+`InductiveDecl.constructors: Vec<ConstructorId>`.
+
+The structural grammar is exactly the ordinary metadata term whitelist:
+`Var`, `Pi`, `Sigma`, `App`, `Ann`, `Path`, `Suc`, universes, primitive Bool/Nat
+forms, `Inductive`, and point `Constructor` references. Current-family heads and
+constructor constants are excluded except for the outer boundary point head.
+All referenced IDs are range/identity checked. Other staged-family references
+must refer to an earlier family table entry; this conservative staging policy
+rules out mutual declaration dependencies without unfolding. Globals remain
+forbidden. `PLam`, `PApp`, `Com`, eliminators and other executable forms remain
+outside the whitelist even inside a field. In particular constructor arguments
+cannot smuggle in constructor dimensions through path application. `Path`
+increments only the dimension scope of its family, while `Pi`/`Sigma` increment
+only the codomain's term scope. Endpoints inherit the outer scopes.
+
+The raw arena is append-only, but a forged predicted `TermId` can still create
+a self/forward edge or cycle. Iterative term traversal uses an active-path set
+to reject cycles, while permitting shared DAGs. Application-spine traversal has
+its own cycle check; the depth budget includes both spine and field traversal.
+Boundary references can only name an earlier point of the same owner. There is
+no term form carrying a higher ID, so self/higher boundary applications cannot
+be expressed in this slice. Numeric reinterpretation as a point ID refers to
+that point table entry or fails lookup; it never creates a higher application.
+
+Concrete limits for one validation call are:
+
+| Resource | Limit |
+| --- | --- |
+| Staged families | 128 |
+| Point and higher constructors combined | 4,096 |
+| Dimensions per higher constructor | 16, with at least one required |
+| Entries per parameter/index/argument telescope | 256 |
+| Boundary pieces per higher constructor / total | 256 / 4,096 |
+| Term node visits / face node visits | 100,000 / 32,768 |
+| Traversal depth, root at zero | 128 |
+| Aggregate validation work | 200,000 |
+
+Work is charged for table/membership/binder/index/piece traversal, dimensions,
+term enter/exit events, face nodes and boundary application traversal. Repeated
+visits to shared terms count again; no scope-insensitive memoization can hide
+work or scope errors. Individual limits and the aggregate work cap both apply,
+so the latter may be reached first. Validation uses explicit work stacks rather
+than recursive traversal, including for faces; exhaustion returns an error and
+no certificate. These bound validation work on reachable metadata, not memory
+already allocated by the raw-input producer. Tests include a 256 KiB worker
+stack, over-depth terms/faces, shared-graph work exhaustion and exact limit
+edges. No endpoint enumeration or face solver is used.
+
+Scope checks run even on `Bot` faces. Conversely, empty/incomplete boundaries,
+`Top` pieces that constrain the interior, and well-scoped but ill-typed result
+indices can pass A: sort/index/boundary typing, perimeter coverage and overlap
+conversion belong to B. The Circle fixture stores exactly the endpoint pieces
+below, but source `data Circle` is still rejected by the ordinary elaborator.
 
 ## Scope convention and initial fragment
 
@@ -204,8 +284,8 @@ language with dimension binders.
 | Telescopes | Separate term/dimension arities and de Bruijn scope; at least one dimension for a higher record; no dimension payload on a point record | Parameter/index/argument domains are types; enforce the existing constructor-field universe bound and dependent telescope checking |
 | Results | Exactly the owner's index count; result parameters implicit and uniform; no forbidden occurrences | Check each index in its dependent domain, instantiated with parameters and all previously checked result indices, at generic constructor dimensions |
 | Boundary syntax | All pieces use scoped `F`/`D` and admissible terms; apply the nonrecursive whitelist even on impossible faces | Under each face, check its term against the reconstructed result family, including all parameters and indices |
-| Coverage | Derive intended extent from dimensions; caller cannot assert an arbitrary coverage certificate | Prove extent equivalence with face entailment, as below |
-| Coherence | Enumerate every pair within resource bounds | Typed conversion of the two terms under the intersection of their faces |
+| Coverage | Store dimensions and scoped faces, without a caller-supplied coverage certificate | Derive the intended extent and prove extent equivalence with face entailment, as below |
+| Coherence | Bound piece counts; no overlap traversal in A | Enumerate every pair within work bounds and check typed conversion under the intersection of their faces |
 
 For `k > 0`, the intended boundary is the entire cubical perimeter:
 
@@ -478,24 +558,25 @@ for all traversals and pair checks in one validation budget, so many small
 pieces cannot evade a per-piece limit. Do not expand substitutions eagerly or
 enumerate the `2^k` endpoints. The existing metadata depth guard (512), face
 solver depth (256), expansion/clause limits, and evaluator fuel/node limits are
-useful existing bounds, not a complete budget for this new pass. A must specify
-concrete new aggregate limits and bounded-stack tests; B must propagate solver
+useful existing bounds, not a complete budget for this new pass. The implemented
+A limits and bounded-stack tests are listed above; B must propagate solver
 and conversion exhaustion as inconclusive validation, never success. No
 partial signature is published after an error. Do not retain semantic arena
 IDs across checking sessions.
 
 ## Staged implementation plan and acceptance gates
 
-All slices below are future work. This document implements none of them.
+Slice A is implemented in staging only. Slices B–F remain future work.
 
 ### HIT Slice A — structurally checked metadata only
 
-Add generic higher IDs/records, tagged family membership, staging API states,
-the dimension-aware scope walker, reference/kind checks, nonrecursive whitelist,
-and explicit traversal budgets. Build Circle metadata directly in Rust tests;
-exercise malformed IDs, dimensions, ordering, duplicate membership, kind errors,
-and resource limits. Keep structural candidates out of executable programs.
-No term/value extension, evaluator rule, or surface acceptance.
+Implemented in `src/hit.rs`: generic higher IDs/records, tagged family membership,
+raw/checked staging API states, a dimension-aware scope walker, reference/kind
+checks, the nonrecursive whitelist, and explicit traversal budgets. Rust tests
+construct Circle directly and exercise malformed IDs, dimensions, ordering,
+duplicate membership, kind errors and resource limits. Structural candidates
+remain outside executable programs. There is no term/value extension, evaluator
+rule, semantic validation, or surface acceptance.
 
 ### HIT Slice B — semantic validation
 
@@ -548,6 +629,7 @@ actually passes this gate.
 
 For each slice that changes Rust, require `cargo fmt --all -- --check`,
 `cargo clippy --all-targets --all-features -- -D warnings`, and
-`cargo test --all-targets --all-features --locked`. The present documentation-only
-change adds no tests and changes no runtime behavior; it does not mark HITs as
-implemented or supersede the existing ordinary-inductive trust boundary.
+`cargo test --all-targets --all-features --locked`. Slice A also has the focused
+command `cargo test hit::tests --locked`. Structurally checked staging metadata
+does not constitute executable HIT support or supersede the existing
+ordinary-inductive trust boundary.

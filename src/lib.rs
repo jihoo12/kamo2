@@ -7,6 +7,7 @@ mod eval;
 mod face;
 mod glue;
 mod hash;
+mod hit;
 mod quote;
 pub mod surface;
 mod syntax;
