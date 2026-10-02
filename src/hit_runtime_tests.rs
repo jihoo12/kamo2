@@ -354,7 +354,113 @@ fn renamed_and_endpoint_substitutions_reactivate_boundaries() {
 }
 
 #[test]
-fn ordinary_elimination_and_composition_never_treat_base_as_exhaustive() {
+fn circle_composition_e1_reduces_only_boundary_coherent_boxes() {
+    for optimized in [false, true] {
+        let p = circle();
+        let mut e = Engine::new(&p, optimized, 100_000, 100_000);
+        let top = e.faces.top();
+        let circle_ty = e.alloc(Val::Inductive(InductiveId::new(0)));
+        let base = e.alloc(Val::Constructor(ConstructorId::new(0)));
+
+        // Constant Circle transport/composition with no tubes preserves base.
+        let dim = e.fresh_dim();
+        let base_com = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: base,
+            tubes: vec![],
+        }));
+        let forced = e.force(base_com, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Constructor(id) if id == ConstructorId::new(0)));
+
+        // An interior loop value is also preserved when the box has no tubes.
+        let j = e.fresh_dim();
+        let loop_j = e.alloc(Val::HigherApp {
+            constructor: HigherConstructorId::new(0),
+            parameters: vec![],
+            arguments: vec![],
+            dimensions: vec![Dim::Var(j)],
+        });
+        let dim = e.fresh_dim();
+        let loop_com = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: loop_j,
+            tubes: vec![],
+        }));
+        let forced = e.force(loop_com, top).unwrap();
+        assert!(matches!(
+            e.get(forced),
+            Val::HigherApp {
+                constructor,
+                dimensions,
+                ..
+            } if constructor == HigherConstructorId::new(0)
+                && dimensions == vec![Dim::Var(j)]
+        ));
+
+        // A tube may have a higher head generically but reduce to base on its
+        // attaching face. The E1 rule checks the restricted target, not the
+        // unreduced head.
+        let left = e.faces.eq(Dim::Var(j), Dim::Zero);
+        let right = e.faces.eq(Dim::Var(j), Dim::One);
+        let dim = e.fresh_dim();
+        let mixed = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: base,
+            tubes: vec![(left, loop_j), (right, loop_j)],
+        }));
+        let forced = e.force(mixed, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Constructor(id) if id == ConstructorId::new(0)));
+
+        // Inconsistent tube faces are ignored rather than forcing a spurious
+        // constructor agreement.
+        let impossible = e.faces.and(left, right);
+        let dim = e.fresh_dim();
+        let inconsistent = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: base,
+            tubes: vec![(impossible, loop_j)],
+        }));
+        let forced = e.force(inconsistent, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Constructor(id) if id == ConstructorId::new(0)));
+
+        // If a live target tube genuinely disagrees with the candidate, the
+        // composition remains formal instead of guessing a HIT constructor.
+        let k = e.fresh_dim();
+        let loop_k = e.alloc(Val::HigherApp {
+            constructor: HigherConstructorId::new(0),
+            parameters: vec![],
+            arguments: vec![],
+            dimensions: vec![Dim::Var(k)],
+        });
+        let live = e.faces.eq(Dim::Var(j), Dim::Zero);
+        let dim = e.fresh_dim();
+        let blocked = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: loop_k,
+            tubes: vec![(live, loop_j)],
+        }));
+        let forced = e.force(blocked, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Com(_)));
+    }
+}
+
+#[test]
+fn ordinary_elimination_stays_forbidden_while_circle_e1_handles_base() {
     let mut p = circle();
     let c = p.alloc(Term::Inductive(InductiveId::new(0)), 0);
     let base = p.alloc(Term::Constructor(ConstructorId::new(0)), 0);
@@ -395,7 +501,7 @@ fn ordinary_elimination_and_composition_never_treat_base_as_exhaustive() {
                 let forced = e.force(com, top).unwrap();
                 e.get(forced)
             },
-            Val::Com(_)
+            Val::Constructor(id) if id == ConstructorId::new(0)
         ));
         let bad = e.alloc(Val::Elim {
             inductive: InductiveId::new(0),

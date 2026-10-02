@@ -1645,6 +1645,95 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Conservative Slice E1 rule for the unparameterized Circle fragment.
+    /// We only reduce a box when the family is exactly the published one-point,
+    /// one-path Circle shape and every active tube agrees at the target with
+    /// the candidate cap value. Otherwise composition remains formal/blocked.
+    fn compose_circle_hit(
+        &mut self,
+        c: Composition,
+        face: FaceId,
+        inductive: InductiveId,
+        family_arguments: Vec<ValId>,
+    ) -> Result<Option<ValId>> {
+        let family = self.program.inductives[inductive.index()].clone();
+        if !family.parameters.is_empty()
+            || !family.indices.is_empty()
+            || !family_arguments.is_empty()
+        {
+            return Ok(None);
+        }
+
+        let members = family.constructors.higher()?;
+        let [
+            ConstructorRef::Point(base_id),
+            ConstructorRef::Higher(loop_id),
+        ] = members
+        else {
+            return Ok(None);
+        };
+        let base = self.program.constructors[base_id.index()].clone();
+        let loop_constructor = self.program.higher_constructor(*loop_id)?.clone();
+        if base.inductive != inductive
+            || !base.arguments.is_empty()
+            || !base.result_indices.is_empty()
+            || !base.recursive_arguments.is_empty()
+            || loop_constructor.inductive != inductive
+            || !loop_constructor.arguments.is_empty()
+            || loop_constructor.dimensions.len() != 1
+            || !loop_constructor.result_indices.is_empty()
+        {
+            return Ok(None);
+        }
+
+        for endpoint in [c.from, c.to] {
+            let endpoint_family = self.restrict(c.family, c.dim, endpoint);
+            let Some((endpoint_id, endpoint_arguments)) =
+                self.inductive_application(endpoint_family, face)?
+            else {
+                return Ok(None);
+            };
+            if endpoint_id != inductive || !endpoint_arguments.is_empty() {
+                return Ok(None);
+            }
+        }
+
+        let candidate = self.force(c.cap, face)?;
+        match self.get(candidate) {
+            Val::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } if constructor == *loop_id
+                && parameters.is_empty()
+                && arguments.is_empty()
+                && dimensions.len() == 1 => {}
+            _ => {
+                let (head, spine) = self.application_spine_forced(candidate, face)?;
+                if !matches!(self.get(head), Val::Constructor(id) if id == *base_id)
+                    || !spine.is_empty()
+                {
+                    return Ok(None);
+                }
+            }
+        }
+
+        let target_family = self.restrict(c.family, c.dim, c.to);
+        for (tube_face, tube) in &c.tubes {
+            let under = self.faces.and(face, *tube_face);
+            if self.faces.inconsistent(under)? {
+                continue;
+            }
+            let target_tube = self.restrict(*tube, c.dim, c.to);
+            if !self.conv(target_tube, candidate, Some(target_family), under)? {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(candidate))
+    }
+
     /// Constructor-directed composition for the deliberately small ordinary
     /// inductive fragment. We only reduce when parameters and every dependent
     /// field type are definitionally constant across the composition. This is
@@ -1659,7 +1748,7 @@ impl<'a> Engine<'a> {
     ) -> Result<Option<ValId>> {
         let family = self.program.inductives[inductive.index()].clone();
         if family.constructors.is_higher() {
-            return Ok(None);
+            return self.compose_circle_hit(c, face, inductive, family_arguments);
         }
         let parameter_count = family.parameters.len();
         let index_count = family.indices.len();

@@ -520,7 +520,7 @@ and ambient faces, not only for closed endpoints. Path checking can validate a
 generated method once higher endpoints compute; it cannot create the missing
 higher-constructor or eliminator reductions itself.
 
-## Composition obligations and alternatives (future Slice E)
+## Composition obligations and alternatives (Slice E in progress)
 
 Do not extend `compose_inductive` to higher heads, or call it for point heads
 whose family has higher constructors. Before E, HIT compositions remain blocked
@@ -555,7 +555,27 @@ Every proposed rule must establish at least:
    respecting its method coherence. Eliminating only constructor heads and
    ignoring formal composition values is not a full computational eliminator.
 
-Plausible strategies remain alternatives pending Cartesian justification:
+Slice E has started with a deliberately narrow **E1 constructor-specific
+boundary-aware reduction** for the unparameterized Circle shape. It recognizes
+only the published family with one nullary point constructor followed by one
+nullary one-dimensional higher constructor and no parameters or indices. The cap
+is the candidate target value. Reduction occurs only when every consistent tube,
+after restriction to the composition target, converts to that candidate in the
+tube face context. This deliberately rechecks newly active higher boundaries via
+ordinary forcing/conversion. Mixed point/higher heads are therefore allowed only
+when the higher head actually reduces to the same boundary value on the attaching
+face. Inconsistent tube faces are ignored. If any live target tube disagrees, the
+composition remains formal `Com`.
+
+E1 also preserves an interior `loop(j)` cap for a tube-free constant Circle box.
+It does not synthesize or compose interval arguments, use connections, choose an
+endpoint, generalize to parameters/indices/fields, or add a new canonical HIT
+composition value. This is a conservative computation improvement, not the full
+Slice E Kan rule. In particular, dependent elimination of genuinely blocked
+formal HIT compositions still needs an explicit E2 rule before Slice E can be
+called complete.
+
+The broader plausible strategies remain:
 
 - **Formal HIT composition values:** retain a checked `Com`-like canonical
   operation for HITs, with source/tube/boundary equations and dependent
@@ -738,12 +758,17 @@ universe policy described above. HIT composition remains blocked.
 
 ### HIT Slice E — Cartesian composition integration
 
-Select and justify a precise strategy from the alternatives above, starting with
-Circle. Specify its boundary/substitution laws and dependent elimination on
-composition values before implementation. Add adversarial boundary boxes and
-reduction-order tests, preserve existing ordinary blocking rules, and record
-remaining metatheoretic gaps. Do not enable more general metadata fragments by
-accident when only Circle's composition fragment has been reviewed.
+In progress. E1 implements the conservative unparameterized-Circle reduction
+described above: target tube restrictions must convert to the cap candidate, so
+boundary-reduced mixed heads, disjunctive endpoint faces, and inconsistent faces
+are handled without guessing a constructor. Unsupported boxes remain `Com`, and
+all parameterized/indexed/general-HIT families remain blocked.
+
+Before E is complete, specify and implement the dependent action of `HitElim` on
+genuinely formal HIT compositions, add stronger substitution/diagonal and
+reduction-order tests around that rule, and record the remaining metatheoretic
+gap. Do not enable more general metadata fragments by accident when only
+Circle's reviewed fragment is implemented.
 
 ### HIT Slice F — surface `data Circle`
 
