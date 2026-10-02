@@ -1,4 +1,4 @@
-//! Slice C publication/runtime helpers plus Slice D HIT elimination support. No HIT Kan rule.
+//! Slice C runtime, Slice D HIT elimination, and scoped Slice E Circle composition support.
 #[cfg(test)]
 #[path = "hit_runtime_tests.rs"]
 mod tests;
@@ -71,8 +71,9 @@ fn copy_metadata_terms(from: &Arena<TermId, Node>, to: &mut Arena<TermId, Node>)
 }
 
 /// CheckedProgram rechecks published signatures, including forged internal
-/// Programs. C deliberately supports all-Higher signatures or ordinary programs,
-/// not mixed imports yet; this cannot silently erase a Higher membership.
+/// Programs. The general staging path remains all-Higher; Slice F additionally
+/// permits ordinary families to coexist with the exact scoped surface Circle
+/// shape, without silently widening the general mixed-HIT trust boundary.
 pub(crate) fn validate_executable(program: &Program) -> Result<()> {
     require(
         program.terms.len() <= MAX_TERM_NODES,
@@ -112,41 +113,154 @@ pub(crate) fn validate_executable(program: &Program) -> Result<()> {
             }
         }
     }
-    let mut raw = RawHigherMetadata::default();
-    for f in &program.inductives {
-        require(
-            f.parameters.len() <= MAX_TELESCOPE && f.indices.len() <= MAX_TELESCOPE,
-            "telescope budget exhausted",
-        )?;
-        let FamilyConstructors::Higher(members) = &f.constructors else {
-            return Err(Error::plain(
-                "Slice C mixed Ordinary/Higher signatures are not supported",
-            ));
+    let all_higher = program
+        .inductives
+        .iter()
+        .all(|family| family.constructors.is_higher());
+    if all_higher {
+        let mut raw = RawHigherMetadata::default();
+        for f in &program.inductives {
+            require(
+                f.parameters.len() <= MAX_TELESCOPE && f.indices.len() <= MAX_TELESCOPE,
+                "telescope budget exhausted",
+            )?;
+            let FamilyConstructors::Higher(members) = &f.constructors else {
+                unreachable!();
+            };
+            require(
+                members.len() <= MAX_CONSTRUCTORS,
+                "membership budget exhausted",
+            )?;
+            raw.families.push(HigherFamilyDecl {
+                id: f.id,
+                name: String::new(),
+                universe: f.universe,
+                parameters: f.parameters.clone(),
+                indices: f.indices.clone(),
+                constructors: members.clone(),
+            });
+        }
+        for point in &program.constructors {
+            require(
+                point.arguments.len() <= MAX_TELESCOPE
+                    && point.result_indices.len() <= MAX_TELESCOPE,
+                "telescope budget exhausted",
+            )?;
+        }
+        copy_metadata_terms(&program.terms, &mut raw.terms);
+        raw.points = program.constructors.clone();
+        raw.higher = program.higher.clone();
+        raw.validate()?.validate_semantic()?;
+    } else {
+        validate_mixed_surface_circles(program)?;
+    }
+    validate_runtime_terms(program)
+}
+
+fn validate_mixed_surface_circles(program: &Program) -> Result<()> {
+    let mut seen_higher = HashSet::new();
+    let mut seen_points = HashSet::new();
+
+    for family in &program.inductives {
+        let FamilyConstructors::Higher(members) = &family.constructors else {
+            continue;
         };
         require(
-            members.len() <= MAX_CONSTRUCTORS,
-            "membership budget exhausted",
+            family.parameters.is_empty() && family.indices.is_empty(),
+            "mixed surface HIT gate supports only unparameterized, unindexed Circle",
         )?;
-        raw.families.push(HigherFamilyDecl {
-            id: f.id,
-            name: String::new(),
-            universe: f.universe,
-            parameters: f.parameters.clone(),
-            indices: f.indices.clone(),
-            constructors: members.clone(),
-        });
+        let [
+            ConstructorRef::Point(base_id),
+            ConstructorRef::Higher(loop_id),
+        ] = members.as_slice()
+        else {
+            return Err(Error::plain(
+                "higher metadata: mixed surface HIT gate supports exactly one point and one path constructor",
+            ));
+        };
+
+        let base = program
+            .constructors
+            .get(base_id.index())
+            .ok_or_else(|| Error::plain("higher metadata: missing Circle point constructor"))?;
+        require(
+            base.id == *base_id
+                && base.inductive == family.id
+                && base.arguments.is_empty()
+                && base.result_indices.is_empty()
+                && base.recursive_arguments.is_empty(),
+            "malformed Circle point constructor",
+        )?;
+        require(
+            seen_points.insert(*base_id),
+            "duplicate mixed HIT point membership",
+        )?;
+
+        let higher = program
+            .higher
+            .get(loop_id.index())
+            .ok_or_else(|| Error::plain("higher metadata: missing Circle path constructor"))?;
+        require(
+            higher.id == *loop_id
+                && higher.inductive == family.id
+                && higher.arguments.is_empty()
+                && higher.dimensions.len() == 1
+                && higher.result_indices.is_empty()
+                && higher.boundary.pieces.len() == 2,
+            "malformed Circle path constructor",
+        )?;
+        require(
+            seen_higher.insert(*loop_id),
+            "duplicate mixed HIT higher membership",
+        )?;
+
+        let mut zero = false;
+        let mut one = false;
+        for piece in &higher.boundary.pieces {
+            match piece.face {
+                F::Eq(D::Bound(0), D::Zero) | F::Eq(D::Zero, D::Bound(0)) if !zero => zero = true,
+                F::Eq(D::Bound(0), D::One) | F::Eq(D::One, D::Bound(0)) if !one => one = true,
+                _ => {
+                    return Err(Error::plain(
+                        "higher metadata: surface Circle boundary must be exactly i=0 and i=1",
+                    ));
+                }
+            }
+            require(
+                piece.term.index() < program.terms.len()
+                    && matches!(
+                        program.terms.get(piece.term).term,
+                        Term::Constructor(id) if id == *base_id
+                    ),
+                "surface Circle boundary must reduce directly to its point constructor",
+            )?;
+        }
+        require(zero && one, "surface Circle boundary is incomplete")?;
+    }
+
+    for (position, higher) in program.higher.iter().enumerate() {
+        require(
+            higher.id.index() == position,
+            "higher constructor ID does not match table position",
+        )?;
+        require(
+            seen_higher.contains(&higher.id),
+            "orphan higher constructor in mixed surface program",
+        )?;
     }
     for point in &program.constructors {
-        require(
-            point.arguments.len() <= MAX_TELESCOPE && point.result_indices.len() <= MAX_TELESCOPE,
-            "telescope budget exhausted",
-        )?;
+        let family = program
+            .inductives
+            .get(point.inductive.index())
+            .ok_or_else(|| Error::plain("higher metadata: point has missing owner"))?;
+        if family.constructors.is_higher() {
+            require(
+                seen_points.contains(&point.id),
+                "orphan point constructor in mixed surface HIT family",
+            )?;
+        }
     }
-    copy_metadata_terms(&program.terms, &mut raw.terms);
-    raw.points = program.constructors.clone();
-    raw.higher = program.higher.clone();
-    raw.validate()?.validate_semantic()?;
-    validate_runtime_terms(program)
+    Ok(())
 }
 
 impl Program {

@@ -4,6 +4,13 @@ const REFL: &str = r#"
     def refl (A : Type) (x : A) : x == x = path i => x
 "#;
 
+const CIRCLE: &str = r#"
+    data Circle : Type where {
+      base : Circle;
+      loop : base == base
+    }
+"#;
+
 #[test]
 fn reflexivity_and_both_endpoints_compute() {
     let source = format!(
@@ -115,6 +122,51 @@ fn paths_reject_unknown_dimensions_wrong_types_and_wrong_boundaries() {
     ] {
         let error = CheckedProgram::check_surface(source).unwrap_err();
         assert!(error.message.contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn surface_circle_path_constructor_checks_and_endpoints_compute() {
+    let source = format!(
+        r#"{CIRCLE}
+        def p : base == base = loop
+        def eta : base == base = path i => loop @ i
+        def left : Circle = loop @ 0
+        def right : Circle = loop @ 1
+    "#
+    );
+    let program = CheckedProgram::check_surface(&source).unwrap();
+    assert_eq!(program.normalize("left").unwrap().text, "base");
+    assert_eq!(program.normalize("right").unwrap().text, "base");
+    let path = program.normalize("p").unwrap().text;
+    assert!(path.contains("higher loop"), "{path}");
+    assert_eq!(program.normalize("eta").unwrap().text, path);
+}
+
+#[test]
+fn surface_circle_match_remains_rejected_without_coherence_methods() {
+    let source = format!(
+        r#"{CIRCLE}
+        def bad (x : Circle) : Circle =
+          match x {{ base => base }}
+    "#
+    );
+    let error = CheckedProgram::check_surface(&source).unwrap_err();
+    assert!(error.message.contains("ordinary operation"), "{error}");
+}
+
+#[test]
+fn surface_hit_classification_uses_constructor_results_only_and_stays_scoped() {
+    CheckedProgram::check_surface("data Wrap : Type where { mk : (p : true == true) -> Wrap }")
+        .unwrap();
+
+    for source in [
+        "data Bad (A : Type) : Type where { base : Bad A; loop : base == base }",
+        "data Bad : Type where { base : Bad; loop : (x : Bool) -> base == base }",
+        "data Bad : Type where { base : Bad; other : Bad; loop : base == base }",
+        "data Bad : Type where { base : Bad; loop : true == true }",
+    ] {
+        assert!(CheckedProgram::check_surface(source).is_err(), "{source}");
     }
 }
 

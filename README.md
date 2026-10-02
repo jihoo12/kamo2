@@ -5,8 +5,8 @@ Rust.
 
 It grows out of [Kamo](https://github.com/jihoo12/kamo), whose small Cartesian
 cubical kernel is the starting point. Kamo2 keeps that cubical foundation while
-developing a functional surface language, user-defined inductive families, and
-eventually higher inductive types.
+developing a functional surface language, user-defined inductive families, and a
+scoped first higher-inductive milestone around Circle.
 
 This README and [docs/rules.md](docs/rules.md) describe the implemented core and
 its trust boundary. Other design documents are explicitly labeled as proposals
@@ -19,8 +19,9 @@ or future roadmaps where they go beyond the current implementation.
 > Surface `data` declarations, file modules, and ordinary pattern matching are
 > available, including expected-type-directed dependent constructor refinement
 > for ordinary indexed families. Homogeneous path equality (`==`), path
-> abstractions, and path application are available; transport/composition surface
-> syntax and higher inductive types remain roadmap work.
+> abstractions, path application, and the scoped `data Circle` declaration are
+> available. Transport/composition surface syntax and general higher inductive
+> types remain roadmap work.
 
 ## Direction
 
@@ -210,10 +211,9 @@ an expected result type and exhaustive flat constructor patterns.
 
 ## Higher inductive types
 
-HITs come after ordinary inductive families have a clear trusted
-representation, elimination rule, and cubical composition behavior.
-
-The canonical target is:
+Kamo2 now includes a deliberately scoped first HIT milestone built on the
+ordinary trusted representation, dependent elimination, and cubical composition
+infrastructure. The supported surface declaration is:
 
 ```text
 data Circle : Type where
@@ -227,10 +227,12 @@ should reuse Kamo's existing path/composition machinery.
 
 The [higher-inductive design](docs/higher-inductive-types.md) specifies proposed
 boundary metadata and staged implementation gates. Structurally and semantically
-checked HIT signature staging has an internal, gated one-dimensional core
-fragment for higher applications, boundary reduction, and dependent elimination.
-HIT composition and surface HIT declarations remain unimplemented; Circle is not
-yet a surface language feature.
+checked HIT signature staging has a gated one-dimensional core fragment for
+higher applications, boundary reduction, dependent elimination, and scoped
+unparameterized-Circle composition. The surface now accepts the exact
+`data Circle` form with `base` and `loop : base == base`, including `loop @ i`
+and endpoint computation. General parameterized/indexed/multidimensional HITs
+and surface HIT matching remain unimplemented.
 
 ## Current core syntax
 
@@ -334,13 +336,15 @@ Completed foundations:
 - [x] surface `data` declarations for ordinary and indexed families;
 - [x] non-dependent pattern matching and structural recursion lowering;
 - [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
-- [x] homogeneous cubical surface paths (`==`, `path`, `@`).
+- [x] homogeneous cubical surface paths (`==`, `path`, `@`);
+- [x] gated Circle HIT elimination and scoped composition;
+- [x] scoped surface `data Circle` and higher path-constructor elaboration.
 
 Next milestones:
 
 - [ ] broader dependent pattern matching (index equations and nested patterns);
 - [ ] further cubical surface syntax (transport, composition, faces, and Glue);
-- [ ] complete higher inductive types: Circle composition and surface `data Circle`.
+- [ ] generalize HIT declarations beyond the scoped Circle fragment.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate
 propositional equality type, broad global type inference, and premature HIT

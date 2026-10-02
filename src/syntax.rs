@@ -169,17 +169,14 @@ impl Program {
     /// This deliberately accepts only direct recursive arguments. Any nested
     /// occurrence (including an occurrence in a function domain) is rejected.
     pub(crate) fn validate_inductives(&self) -> Result<()> {
-        if !self.higher.is_empty()
+        let has_higher = !self.higher.is_empty()
             || self.inductives.iter().any(|f| f.constructors.is_higher())
             || (0..self.terms.len()).any(|i| {
                 matches!(
                     self.terms.get(TermId::new(i)).term,
                     Term::HigherApp { .. } | Term::HitElim { .. }
                 )
-            })
-        {
-            return crate::hit::validate_executable(self);
-        }
+            });
         for (position, family) in self.inductives.iter().enumerate() {
             if family.id.index() != position {
                 return Err(Error::plain("malformed inductive id"));
@@ -203,15 +200,19 @@ impl Program {
                 }
                 bound += 1;
             }
-            for constructor_id in family.constructors.ordinary()? {
-                let constructor = self
-                    .constructors
-                    .get(constructor_id.index())
-                    .ok_or_else(|| Error::plain("inductive references a missing constructor"))?;
-                if constructor.id != *constructor_id || constructor.inductive != family.id {
-                    return Err(Error::plain(
-                        "constructor ownership metadata is inconsistent",
-                    ));
+            if let FamilyConstructors::Ordinary(constructor_ids) = &family.constructors {
+                for constructor_id in constructor_ids {
+                    let constructor =
+                        self.constructors
+                            .get(constructor_id.index())
+                            .ok_or_else(|| {
+                                Error::plain("inductive references a missing constructor")
+                            })?;
+                    if constructor.id != *constructor_id || constructor.inductive != family.id {
+                        return Err(Error::plain(
+                            "constructor ownership metadata is inconsistent",
+                        ));
+                    }
                 }
             }
         }
@@ -223,6 +224,9 @@ impl Program {
                 .inductives
                 .get(constructor.inductive.index())
                 .ok_or_else(|| Error::plain("constructor references a missing inductive"))?;
+            if family.constructors.is_higher() {
+                continue;
+            }
             if !family.constructors.ordinary()?.contains(&constructor.id) {
                 return Err(Error::plain(
                     "constructor is missing from its inductive family",
@@ -278,7 +282,11 @@ impl Program {
                 }
             }
         }
-        Ok(())
+        if has_higher {
+            crate::hit::validate_executable(self)
+        } else {
+            Ok(())
+        }
     }
 
     fn direct_inductive_application(
