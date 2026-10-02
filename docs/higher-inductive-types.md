@@ -1,8 +1,8 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **Slice A implemented: structurally checked staging metadata only**.
-Semantic HIT checking, evaluation, elimination, composition, and surface HIT
-declarations remain unimplemented. Ordinary inductives and homogeneous surface
+Status: **Slices A/B implemented: structurally and semantically checked HIT
+signature staging only**. Higher-constructor evaluation, elimination, composition,
+and surface HIT declarations remain unimplemented. Ordinary inductives and homogeneous surface
 paths are implemented; they do not already provide higher constructors. The
 staging subsystem changes no mathematical behavior of existing programs.
 
@@ -107,17 +107,19 @@ is atomic after validation, with no mutable metadata behind the certificate.
 (reusing `ConstructorDecl`), higher table, and `HigherFamilyDecl` table. Each
 staged family has one ordered `Vec<ConstructorRef>`; higher IDs have a distinct
 Rust type from point IDs. All IDs resolve locally within these staging tables.
-There is no associated executable `Program` to accidentally run as a point-only
-version of a staged family. The module is crate-private and intentionally has
-no production consumer yet.
+There is no associated executable `Program` available to callers. The module is
+crate-private and intentionally has no production consumer yet. Slice B creates
+a private session-local point-signature view solely for semantic validation,
+as detailed below.
 
 `RawHigherMetadata::validate(&self)` returns a
 `StructurallyCheckedHigherMetadata<'_>` only after the entire structural pass
 succeeds. The certificate's private field holds an immutable borrow of the raw
 arena and all its tables; Rust prevents mutation for the certificate's lifetime.
-Accessors expose only shared slices. Neither type converts into `Program` or
-`CheckedProgram`, and neither is accepted by the checker/evaluator. This is an
-API gate, not a promise that callers will remember to skip HIT evaluation.
+Accessors expose only shared data. Neither type converts into `Program` or
+`CheckedProgram`. Only the structural certificate is accepted by the Slice B
+validation entrypoint; neither certificate is an executable signature. This is
+an API gate, not a promise that callers will remember to skip HIT evaluation.
 
 The consumer audit covered `validate_inductives`, semantic declaration checking,
 generic eliminator checking and method generation, evaluator iota and
@@ -125,8 +127,8 @@ generic eliminator checking and method generation, evaluator iota and
 and eliminator methods, and surface constructor resolution, matching and
 exhaustiveness. All consume the unchanged ordinary `Program` tables. No changes
 were needed in those consumers. The eventual `FamilyConstructors` migration
-above belongs to B/C integration, together with semantic certification and
-ordinary-only dispatch gates; Slice A does not change
+above belongs to C or later, together with executable publication and
+ordinary-only dispatch gates; neither A nor B changes
 `InductiveDecl.constructors: Vec<ConstructorId>`.
 
 The structural grammar is exactly the ordinary metadata term whitelist:
@@ -180,6 +182,80 @@ Scope checks run even on `Bot` faces. Conversely, empty/incomplete boundaries,
 indices can pass A: sort/index/boundary typing, perimeter coverage and overlap
 conversion belong to B. The Circle fixture stores exactly the endpoint pieces
 below, but source `data Circle` is still rejected by the ordinary elaborator.
+
+### Implemented Slice B semantic gate
+
+`StructurallyCheckedHigherMetadata::validate_semantic(&self)` issues
+`SemanticallyCheckedHigherMetadata<'_>` only on complete success. Its private
+field borrows the original immutable raw metadata. It retains no values,
+environments, face IDs, generic dimension levels, or validation-only program.
+There is no raw-to-semantic shortcut or unchecked certificate constructor.
+
+The bridge in `src/hit_semantic.rs` is a child module of `check`, so existing
+private context/sort/type operations need no wider visibility. It creates one
+local `Program` containing family and point signatures and no declarations.
+Family/point IDs keep their exact table positions; higher IDs are never inserted
+into the point table. Reachable A-validated terms retain their exact arena IDs.
+Unused syntax slots become inert placeholders: unvalidated unreachable terms
+and deeply nested faces are never cloned or evaluated. Names are unnecessary
+for validation and are not copied.
+
+This incomplete point-only view never escapes the function, never becomes a
+`CheckedProgram`, and is never stored in either certificate. A's unchanged
+whitelist excludes elimination, composition and globals from all reachable
+syntax. Therefore no user-visible exhaustiveness/elimination/composition claim
+can use the missing higher members. The executable `Program` representation,
+ordinary checker implementation, evaluator, quotation, and surface elaborator
+remain unchanged; `check.rs` only connects the new validation module.
+
+The bridge first reuses `check_inductive_declarations` for family telescopes and
+point argument sorts/universes/dependent result indices. Higher argument sorts
+use the same checker and field-universe bound. Parameters and arguments are
+bound before fresh generic dimensions. Dimension environments append binders
+in declaration order, so `Bound(0)` denotes the last dimension independently of
+term locals.
+
+Each higher result index is checked sequentially against its family's index
+domain instantiated with parameters and previously checked index values.
+The expected boundary type is reconstructed as the owner applied to those
+parameter/index values. Each piece is checked against that type under its face.
+The perimeter is a linear OR of the `2k` endpoint faces, and coverage is the OR
+of declared faces. Both entailments use the existing Cartesian solver; there
+is no endpoint sampling or Boolean interval assumption. Every unordered pair
+uses typed conversion under the face intersection. Inconsistent intersections
+are discharged by existing kernel logic only after A has checked the syntax.
+
+One fresh engine serves the entire validation session. Limits never reset per
+constructor, and a final engine budget check precedes success:
+
+| Semantic resource, per full pass | Limit |
+| --- | --- |
+| Syntax arena slots, including unused positions | 100,000 |
+| Higher constructors / boundary pieces | 4,096 / 4,096 |
+| Coverage entailment calls | 8,192 |
+| Aggregate unordered overlap pairs | 16,384 |
+| Bridge work units | 200,000 |
+| Aggregate evaluator/checker/conversion fuel | 1,000,000 |
+| Aggregate semantic arena nodes | 250,000 |
+
+Bridge work covers syntax reachability/copying, signature entries, higher
+constructors, parameters/arguments/indices/dimensions, pieces, entailments and
+overlap pairs. A's face-node/depth bounds and the solver's existing
+depth/expansion/clause/cache limits also remain in force. Pair counts are
+preflighted for the entire input before semantic checking. All solver,
+conversion, fuel, node and bridge-budget errors propagate without certification.
+The node cap uses the existing engine allocation-check convention, with checks
+at operation boundaries and before return; it is not an exact byte-memory cap.
+
+Circle receives a semantic certificate but remains non-executable. Tests cover
+independent sessions; dependent parameter/argument/index telescopes; point and
+higher sort/universe failures; incorrect result/boundary indices; coherent and
+incoherent complete 2D perimeters; disjunctive/clipped-diagonal coverage;
+dimension order; sparse/unreachable syntax; aggregate pairs; and solver/fuel/
+node/work exhaustion. Empty, one-sided, `Bot`, `Top`, unrestricted diagonal and
+ill-typed fixtures continue to pass A and fail B for their semantic defect.
+Surface Circle remains rejected after certification. These certificates do not
+authorize the future term, elimination or composition rules.
 
 ## Scope convention and initial fragment
 
@@ -566,7 +642,7 @@ IDs across checking sessions.
 
 ## Staged implementation plan and acceptance gates
 
-Slice A is implemented in staging only. Slices B–F remain future work.
+Slices A/B are implemented in staging only. Slices C–F remain future work.
 
 ### HIT Slice A — structurally checked metadata only
 
@@ -575,19 +651,19 @@ raw/checked staging API states, a dimension-aware scope walker, reference/kind
 checks, the nonrecursive whitelist, and explicit traversal budgets. Rust tests
 construct Circle directly and exercise malformed IDs, dimensions, ordering,
 duplicate membership, kind errors and resource limits. Structural candidates
-remain outside executable programs. There is no term/value extension, evaluator
-rule, semantic validation, or surface acceptance.
+remain outside executable programs. A itself performs no semantic checking;
+B below adds that separate gate. Neither adds term/value extensions, evaluator
+rules, or surface acceptance.
 
 ### HIT Slice B — semantic validation
 
-Check telescope sorts/universes, generic result indices, each boundary's full
-family type, perimeter coverage and all overlaps. Use fresh generic dimensions
-and the existing Cartesian face solver. Initial boundaries refer only to earlier
-point constructors, so B does not require C's evaluator. Add wrong-type/index,
-missing/extra coverage, coherent/incoherent 2D-corner, and substitution tests.
-Issue an immutable semantic signature certificate, still gated from execution.
-This certificate does not certify future multi-dimensional elimination or Kan
-rules. No surface HIT acceptance.
+Implemented by the semantic certificate in `src/hit.rs` and the private kernel
+bridge in `src/hit_semantic.rs`, as detailed above. Telescope sorts/universes,
+dependent indices, boundary typing, exact perimeter coverage, and typed overlap
+coherence are checked within aggregate budgets. Initial boundaries still refer
+only to earlier point constructors, so B requires none of C's evaluator rules.
+The immutable certificate remains gated from execution and certifies neither
+future multi-dimensional elimination nor Kan rules. No surface HIT acceptance.
 
 ### HIT Slice C — higher applications and boundary reduction
 
@@ -630,6 +706,8 @@ actually passes this gate.
 For each slice that changes Rust, require `cargo fmt --all -- --check`,
 `cargo clippy --all-targets --all-features -- -D warnings`, and
 `cargo test --all-targets --all-features --locked`. Slice A also has the focused
-command `cargo test hit::tests --locked`. Structurally checked staging metadata
+command `cargo test hit::tests --locked`, now including semantic fixtures.
+B's bridge/budget tests use `cargo test check::hit_semantic --locked`.
+Structurally or semantically checked staging metadata
 does not constitute executable HIT support or supersede the existing
 ordinary-inductive trust boundary.

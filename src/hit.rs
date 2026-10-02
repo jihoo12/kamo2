@@ -1,8 +1,8 @@
-//! Slice A only: isolated, structurally checked higher metadata.
+//! Slices A/B: isolated, structurally and semantically checked higher metadata.
 //!
 //! IDs resolve within this staging arena/tables, never an executable Program.
 //! The certificate borrows the entire raw input immutably; there is no export
-//! to Program/CheckedProgram and no evaluator or semantic-checker consumer.
+//! to Program/CheckedProgram. Semantic validation uses a private temporary view.
 // This subsystem intentionally has no production caller until a later slice.
 #![allow(dead_code)]
 
@@ -71,7 +71,29 @@ pub(crate) struct StructurallyCheckedHigherMetadata<'a> {
     raw: &'a RawHigherMetadata,
 }
 
-impl StructurallyCheckedHigherMetadata<'_> {
+/// A persistent fact only: no session-local semantic IDs or executable program.
+#[derive(Debug)]
+pub(crate) struct SemanticallyCheckedHigherMetadata<'a> {
+    raw: &'a RawHigherMetadata,
+}
+
+impl SemanticallyCheckedHigherMetadata<'_> {
+    pub(crate) fn families(&self) -> &[HigherFamilyDecl] {
+        &self.raw.families
+    }
+}
+
+impl<'a> StructurallyCheckedHigherMetadata<'a> {
+    pub(crate) fn validate_semantic(&self) -> Result<SemanticallyCheckedHigherMetadata<'a>> {
+        crate::check::validate_higher(self)?;
+        Ok(SemanticallyCheckedHigherMetadata { raw: self.raw })
+    }
+
+    // Shared syntax access for the validation-only checker; not a Program export.
+    pub(crate) fn raw(&self) -> &RawHigherMetadata {
+        self.raw
+    }
+
     pub(crate) fn families(&self) -> &[HigherFamilyDecl] {
         &self.raw.families
     }
@@ -605,6 +627,288 @@ mod tests {
                 ],
             },
         });
+    }
+
+    mod semantic {
+        use super::*;
+
+        fn reject(raw: &RawHigherMetadata, message: &str) {
+            let structural = raw.validate().expect("A must accept this fixture");
+            let error = structural.validate_semantic().unwrap_err();
+            assert!(
+                error.message.contains(message),
+                "expected {message:?}, got {error}"
+            );
+        }
+
+        #[test]
+        fn circle_and_independent_sessions_remain_staging_only() {
+            let raw = circle();
+            let structural = raw.validate().unwrap();
+            for _ in 0..2 {
+                let semantic = structural.validate_semantic().unwrap();
+                assert_eq!(semantic.families()[0].name, "Circle");
+            }
+            assert!(
+                crate::CheckedProgram::check_surface(
+                    "data Circle : Type where\n  base : Circle\n  loop : base == base\n"
+                )
+                .is_err()
+            );
+        }
+
+        #[test]
+        fn coverage_requires_both_generic_entailments() {
+            for kind in 0..4 {
+                let mut raw = circle();
+                match kind {
+                    0 => raw.higher[0].boundary.pieces.clear(),
+                    1 => raw.higher[0].boundary.pieces.truncate(1),
+                    2 => {
+                        raw.higher[0].boundary.pieces.truncate(1);
+                        raw.higher[0].boundary.pieces[0].face = F::Bot;
+                    }
+                    _ => {
+                        raw.higher[0].boundary.pieces.truncate(1);
+                        raw.higher[0].boundary.pieces[0].face = F::Top;
+                    }
+                }
+                reject(
+                    &raw,
+                    if kind == 3 {
+                        "extra interior"
+                    } else {
+                        "incomplete perimeter"
+                    },
+                );
+            }
+        }
+
+        fn square() -> RawHigherMetadata {
+            let mut raw = circle();
+            raw.higher[0].dimensions.push("j".into());
+            let term = raw.higher[0].boundary.pieces[0].term;
+            raw.higher[0].boundary.pieces = [1, 0]
+                .into_iter()
+                .flat_map(|i| {
+                    [D::Zero, D::One]
+                        .into_iter()
+                        .map(move |endpoint| BoundaryPiece {
+                            face: F::Eq(D::Bound(i), endpoint),
+                            term,
+                        })
+                })
+                .collect();
+            raw
+        }
+
+        #[test]
+        fn coherent_square_and_subdivided_perimeter() {
+            let mut raw = square();
+            raw.validate().unwrap().validate_semantic().unwrap();
+            // A redundant diagonal clipped to a facet is allowed.
+            let term = raw.higher[0].boundary.pieces[0].term;
+            raw.higher[0].boundary.pieces.push(BoundaryPiece {
+                face: F::And(
+                    Box::new(F::Eq(D::Bound(0), D::Bound(1))),
+                    Box::new(F::Eq(D::Bound(1), D::Zero)),
+                ),
+                term,
+            });
+            raw.validate().unwrap().validate_semantic().unwrap();
+            // Combine facets into disjunctive pieces, exercising local checking.
+            let old = std::mem::take(&mut raw.higher[0].boundary.pieces);
+            raw.higher[0].boundary.pieces = vec![BoundaryPiece {
+                face: old
+                    .into_iter()
+                    .fold(F::Bot, |f, p| F::Or(Box::new(f), Box::new(p.face))),
+                term,
+            }];
+            raw.validate().unwrap().validate_semantic().unwrap();
+        }
+
+        #[test]
+        fn diagonal_is_not_perimeter() {
+            let mut raw = square();
+            let term = raw.higher[0].boundary.pieces[0].term;
+            raw.higher[0].boundary.pieces.push(BoundaryPiece {
+                face: F::Eq(D::Bound(0), D::Bound(1)),
+                term,
+            });
+            reject(&raw, "extra interior");
+            raw.higher[0].boundary.pieces.drain(..4);
+            reject(&raw, "incomplete perimeter");
+        }
+
+        #[test]
+        fn complete_square_with_incoherent_corner_fails_conversion() {
+            let mut raw = square();
+            let second = ConstructorId::new(1);
+            raw.points.push(ConstructorDecl {
+                id: second,
+                inductive: InductiveId::new(0),
+                name: "b".into(),
+                arguments: vec![],
+                result_indices: vec![],
+                recursive_arguments: vec![],
+            });
+            raw.families[0]
+                .constructors
+                .insert(1, ConstructorRef::Point(second));
+            let b = alloc(&mut raw, Term::Constructor(second));
+            raw.higher[0].boundary.pieces[2].term = b;
+            reject(&raw, "boundary overlap disagreement");
+        }
+
+        #[test]
+        fn duplicate_facet_with_distinct_fields_fails_overlap() {
+            let mut raw = circle();
+            let nat = alloc(&mut raw, Term::Nat);
+            let zero = alloc(&mut raw, Term::Zero);
+            let one = alloc(&mut raw, Term::Suc(zero));
+            raw.points[0].arguments.push(entry("n", nat));
+            let head = raw.higher[0].boundary.pieces[0].term;
+            let a = alloc(&mut raw, Term::App(head, zero));
+            let b = alloc(&mut raw, Term::App(head, one));
+            for piece in &mut raw.higher[0].boundary.pieces {
+                piece.term = a;
+            }
+            raw.higher[0].boundary.pieces.push(BoundaryPiece {
+                face: F::Eq(D::Bound(0), D::Zero),
+                term: b,
+            });
+            reject(&raw, "boundary overlap disagreement");
+        }
+
+        #[test]
+        fn result_and_boundary_index_types_are_checked() {
+            let mut raw = circle();
+            let nat = alloc(&mut raw, Term::Nat);
+            let zero = alloc(&mut raw, Term::Zero);
+            let one = alloc(&mut raw, Term::Suc(zero));
+            raw.families[0].indices.push(entry("n", nat));
+            raw.points[0].result_indices.push(zero);
+            raw.higher[0].result_indices.push(one);
+            reject(&raw, "higher boundary typing");
+            raw.higher[0].result_indices[0] = alloc(&mut raw, Term::True);
+            reject(&raw, "type mismatch");
+            raw.higher[0].result_indices[0] = zero;
+            raw.validate().unwrap().validate_semantic().unwrap();
+            raw.points[0].result_indices[0] = alloc(&mut raw, Term::True);
+            reject(&raw, "type mismatch");
+        }
+
+        #[test]
+        fn bad_parameter_and_index_domains_and_universe_overflow() {
+            for index in [false, true] {
+                let mut raw = circle();
+                let bad = alloc(&mut raw, Term::True);
+                if index {
+                    raw.families[0].indices.push(entry("x", bad));
+                    raw.points[0].result_indices.push(bad);
+                    raw.higher[0].result_indices.push(bad);
+                } else {
+                    raw.families[0].parameters.push(entry("p", bad));
+                    let var = alloc(&mut raw, Term::Var(0));
+                    let head = raw.higher[0].boundary.pieces[0].term;
+                    let body = alloc(&mut raw, Term::App(head, var));
+                    for piece in &mut raw.higher[0].boundary.pieces {
+                        piece.term = body;
+                    }
+                }
+                reject(&raw, "expected a type");
+            }
+            let mut raw = circle();
+            let overflow = alloc(&mut raw, Term::U(u32::MAX));
+            raw.higher[0].arguments.push(entry("A", overflow));
+            reject(&raw, "universe level overflow");
+        }
+
+        #[test]
+        fn point_and_higher_fields_obey_universe_and_sort_policy() {
+            for point in [false, true] {
+                for not_type in [false, true] {
+                    let mut raw = circle();
+                    let ty = alloc(&mut raw, if not_type { Term::True } else { Term::U(0) });
+                    if point {
+                        raw.points[0].arguments.push(entry("x", ty));
+                        let value = alloc(&mut raw, Term::Bool);
+                        let head = raw.higher[0].boundary.pieces[0].term;
+                        let body = alloc(&mut raw, Term::App(head, value));
+                        for piece in &mut raw.higher[0].boundary.pieces {
+                            piece.term = body;
+                        }
+                    } else {
+                        raw.higher[0].arguments.push(entry("x", ty));
+                    }
+                    reject(
+                        &raw,
+                        if not_type {
+                            "expected a type"
+                        } else if point {
+                            "above inductive universe"
+                        } else {
+                            "above family universe"
+                        },
+                    );
+                }
+            }
+        }
+
+        fn dependent() -> RawHigherMetadata {
+            let mut raw = circle();
+            raw.families[0].universe = 1;
+            let u = alloc(&mut raw, Term::U(0));
+            let v0 = alloc(&mut raw, Term::Var(0));
+            let v1 = alloc(&mut raw, Term::Var(1));
+            let v2 = alloc(&mut raw, Term::Var(2));
+            // D (A : U0) : (B : U0) -> (b : B) -> U1
+            raw.families[0].parameters = vec![entry("A", u)];
+            raw.families[0].indices = vec![entry("B", u), entry("b", v0)];
+            raw.points[0].arguments = vec![entry("B", u), entry("b", v0)];
+            raw.points[0].result_indices = vec![v1, v0];
+            raw.higher[0].arguments = vec![entry("B", u), entry("b", v0)];
+            raw.higher[0].result_indices = vec![v1, v0];
+            let head = raw.higher[0].boundary.pieces[0].term;
+            let with_a = alloc(&mut raw, Term::App(head, v2));
+            let with_b = alloc(&mut raw, Term::App(with_a, v1));
+            let body = alloc(&mut raw, Term::App(with_b, v0));
+            for piece in &mut raw.higher[0].boundary.pieces {
+                piece.term = body;
+            }
+            raw
+        }
+
+        #[test]
+        fn dependent_parameters_arguments_and_indices() {
+            let mut raw = dependent();
+            raw.validate().unwrap().validate_semantic().unwrap();
+            // Earlier result B must instantiate the next index domain.
+            raw.higher[0].result_indices[0] = alloc(&mut raw, Term::Nat);
+            reject(&raw, "type mismatch");
+        }
+
+        #[test]
+        fn boundary_arguments_are_semantically_checked() {
+            let mut raw = dependent();
+            let bad = alloc(&mut raw, Term::True);
+            let body = raw.higher[0].boundary.pieces[0].term;
+            let Term::App(head, _) = raw.terms.get(body).term else {
+                panic!()
+            };
+            let body = alloc(&mut raw, Term::App(head, bad));
+            raw.higher[0].boundary.pieces[0].term = body;
+            reject(&raw, "higher boundary typing");
+        }
+
+        #[test]
+        fn earlier_staged_family_signatures_are_available() {
+            let mut raw = circle();
+            add_circle(&mut raw);
+            let earlier = alloc(&mut raw, Term::Inductive(InductiveId::new(0)));
+            raw.higher[1].arguments.push(entry("x", earlier));
+            raw.validate().unwrap().validate_semantic().unwrap();
+        }
     }
 
     fn rejects(raw: &RawHigherMetadata, message: &str) {

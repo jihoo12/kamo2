@@ -1,3 +1,7 @@
+#[path = "hit_semantic.rs"]
+mod hit_semantic;
+pub(crate) use hit_semantic::validate as validate_higher;
+
 use crate::arena::Key;
 use crate::eval::{Binder, Engine, Env, EnvId, Val, ValId};
 use crate::face::{Dim, FaceId};
