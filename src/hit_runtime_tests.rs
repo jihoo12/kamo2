@@ -788,13 +788,15 @@ fn forged_published_signature_must_revalidate_a_and_b() {
 }
 
 #[test]
-fn surface_circle_stays_rejected() {
-    assert!(
-        CheckedProgram::check_surface(
-            "data Circle : Type where\n  base : Circle\n  loop : base == base\n"
-        )
-        .is_err()
-    );
+fn surface_circle_is_accepted_through_the_scoped_f_gate() {
+    let checked = CheckedProgram::check_surface(
+        "data Circle : Type where { base : Circle; loop : base == base }\n\
+         def left : Circle = loop @ 0\n\
+         def right : Circle = loop @ 1",
+    )
+    .unwrap();
+    assert_eq!(checked.normalize("left").unwrap().text, "base");
+    assert_eq!(checked.normalize("right").unwrap().text, "base");
 }
 
 fn indexed() -> Program {

@@ -36,6 +36,39 @@ fn surface_data_and_transitive_modules_work_together() {
 }
 
 #[test]
+fn surface_circle_imports_keep_higher_path_semantics() {
+    let root = std::env::temp_dir().join(format!("kamo-circle-modules-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("Circle.kamo"),
+        r#"
+            module Circle
+            data Circle : Type where {
+              base : Circle;
+              loop : base == base
+            }
+            def left : Circle = loop @ 0
+        "#,
+    )
+    .unwrap();
+    fs::write(
+        root.join("Main.kamo"),
+        r#"
+            module Main
+            import Circle
+            def right : Circle = loop @ 1
+        "#,
+    )
+    .unwrap();
+
+    let program = CheckedProgram::check_surface_file(root.join("Main.kamo")).unwrap();
+    assert_eq!(program.normalize("left").unwrap().text, "base");
+    assert_eq!(program.normalize("right").unwrap().text, "base");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn standard_nat_and_bool_are_generic_data() {
     let program = CheckedProgram::check_surface(
         r#"

@@ -132,12 +132,13 @@ result. Chained equalities require parentheses.
 General path-abstraction inference, explicit dimension-dependent path families,
 and readable surface syntax for `coe`, `com`, face formulas/systems, and Glue
 remain future work. Only endpoints and bound names are dimensions: there is no
-surface or core interval meet, join, or reversal. Higher inductive constructors
-are also outside this slice.
+surface or core interval meet, join, or reversal. The scoped Circle higher
+constructor described below is now implemented; broader HIT syntax remains later
+work.
 
 ### Higher inductive types
 
-Higher inductive types remain a later goal. A declaration such as:
+A scoped first higher inductive milestone is now implemented. The declaration:
 
 ```text
 data Circle : Type where
@@ -145,11 +146,14 @@ data Circle : Type where
   loop : base == base
 ```
 
-requires boundary-aware constructor metadata and elimination/coherence rules;
-it must not be treated as an ordinary point-constructor extension.
+is accepted when it has exactly this unparameterized/nullary point-plus-path
+shape. `loop` is elaborated through checked higher metadata and path application,
+not treated as an ordinary point constructor. Ordinary surface `match` on Circle
+remains rejected because it cannot state the required coherence method.
 
-The existing Cartesian path, composition, coercion, and Glue machinery should
-remain the foundation for this work.
+Parameterized/indexed/multidimensional HIT declarations and general HIT matching
+remain later work. The existing Cartesian path, composition, coercion, and Glue
+machinery remains the foundation for those extensions.
 
 ### Universe polymorphism
 

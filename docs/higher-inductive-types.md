@@ -1,13 +1,13 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **Slices A/B/C/D and the scoped Circle Slice E implemented**, with an
-internal one-dimensional, nonrecursive higher-application, boundary-reduction,
-dependent-elimination, and unparameterized-Circle composition fragment. General
-parameterized/indexed HIT composition, mixed Ordinary/Higher signature imports,
-and surface HIT declarations remain unimplemented. Ordinary inductives and
-homogeneous surface paths are implemented; they do not already provide higher
-constructors. The new core fragment changes no mathematical behavior of existing
-ordinary programs.
+Status: **Slices A–F implemented for the scoped Circle milestone**. The core has
+one-dimensional nonrecursive higher application/boundary reduction, dependent
+elimination, and unparameterized-Circle composition; the surface accepts the
+exact `data Circle` point/path shape and resolves `loop` as a path. Ordinary and
+scoped Circle families may coexist in one surface program. General
+parameterized/indexed/multidimensional HIT execution, general mixed-HIT imports,
+and surface HIT matching remain unimplemented. Existing ordinary programs keep
+their previous mathematical behavior.
 
 ## Existing boundary and required audit obligations
 
@@ -184,7 +184,7 @@ Scope checks run even on `Bot` faces. Conversely, empty/incomplete boundaries,
 `Top` pieces that constrain the interior, and well-scoped but ill-typed result
 indices can pass A: sort/index/boundary typing, perimeter coverage and overlap
 conversion belong to B. The Circle fixture stores exactly the endpoint pieces
-below, but source `data Circle` is still rejected by the ordinary elaborator.
+below, but Slice F now accepts the scoped source `data Circle` form described below.
 
 ### Implemented Slice B semantic gate
 
@@ -256,8 +256,9 @@ incoherent complete 2D perimeters; disjunctive/clipped-diagonal coverage;
 dimension order; sparse/unreachable syntax; aggregate pairs; and solver/fuel/
 node/work exhaustion. Empty, one-sided, `Bot`, `Top`, unrestricted diagonal and
 ill-typed fixtures continue to pass A and fail B for their semantic defect.
-Surface Circle remains rejected after certification. B certification does not itself
-authorize execution, elimination or composition. C requires an additional gate.
+At Slice B alone, surface Circle was still rejected and the certificate did not
+authorize execution, elimination or composition. Later C–F gates now provide the
+scoped executable/surface Circle path described in this document.
 
 ## Scope convention and initial fragment
 
@@ -425,10 +426,11 @@ from checked metadata. Check exact arities, parameters and dependent arguments,
 and dimension scope. Instantiate result indices from the supplied environments
 to infer its type. Unsaturated term application uses ordinary lambda wrappers;
 dimensions use path abstractions, never a term `Pi` over an invented interval
-type. For Circle the name `loop` will elaborate to
-`PLam(HigherApp(L, [], [], [D::Bound(0)]))`; `loop @ r` uses existing `PApp` beta
-substitution to reach `HigherApp(L, [], [], [r])`. The path type is checked
-against the boundary certificate, not asserted by the resolver.
+type. For Circle the value name `loop` elaborates to
+`PLam(HigherApp(L, [], [], [D::Bound(0)]))`. A direct surface `loop @ r` lowers
+straight to the saturated `HigherApp(L, [], [], [r])`, avoiding inference of the
+path-introduction wrapper; applications of other path values continue to use
+ordinary `PApp`. The path type is derived from checked boundary metadata.
 
 Forcing a higher application instantiates its boundary, then checks which faces
 are entailed by the ambient face. If a piece is active, return its instantiated
@@ -610,30 +612,34 @@ share the same mathematical reduction rules.
 
 ## Surface elaboration boundary
 
-`Expr::Equality` can already represent `loop : base == base` in a parsed data
-declaration. `data_declaration` currently demands that each constructor result
-have the declared family as its application head, so it rejects this result.
-Keep that behavior until semantic metadata validation and executable gates are
-ready. Parsing is not acceptance by the kernel.
+Slice F classifies constructors by their **result**, not by argument types. A
+result returning the declared family remains a point constructor, so an ordinary
+constructor may still have a path-typed argument. A homogeneous path result is a
+higher-constructor candidate. The currently executable surface gate deliberately
+accepts only the reviewed Circle shape: no parameters or indices, exactly one
+earlier nullary point, followed by one nullary path constructor whose two
+endpoints are that same earlier point.
 
-Future elaboration should classify a result returning `D p indices` as a point
-candidate, and a path result with endpoints in that family as a higher candidate.
-For homogeneous `left == right`, infer/check the endpoints' family, ensure it is
-the declared owner with uniform parameters, introduce a fresh dimension, and
-produce two resolved endpoint pieces. Bind ordinary arguments before that
-dimension according to the metadata convention. Kernel checks must independently
-revalidate ownership, indices, boundary types and coherence. Do not infer a HIT
-merely because an ordinary constructor has a path-typed argument: its result
-still determines its kind. Conversely, do not discard a path result to make a
-point constructor returning the owner.
+For the accepted path result, elaboration introduces one dimension and emits the
+two resolved boundary pieces `i = 0 -> base` and `i = 1 -> base`, tagging family
+membership as `Higher([Point(base), Higher(loop)])`. The mixed executable gate
+independently revalidates IDs/ownership, the exact family/member shape, nullary
+telecopes, one-dimensionality, both endpoint faces, and direct point boundaries.
+This is the scoped reason Prelude's ordinary families may coexist with surface
+Circle; it is not a general mixed Ordinary/Higher validation rule.
 
-Resolve earlier constructors in declaration order; resolve `loop` uses through
-the checked path wrapper described above. More general dependent path-result or
-multi-dimensional surface declarations need explicit syntax and checking work;
-do not pretend homogeneous `==` states every such family. Surface `match` on a
-HIT remains rejected until a surface form can supply coherence methods. Slice F
-may expose Circle declarations and path uses without claiming ordinary pattern
-syntax can express dependent HIT elimination.
+Point names in a Higher family remain usable as ordinary values, while ordinary
+surface pattern resolution still rejects them. The name `loop` elaborates to the
+checked path wrapper `PLam(HigherApp(loop, [], [], [Bound(0)]))`; direct
+`loop @ r` elaborates to the corresponding saturated `HigherApp` so no
+introduction-form type inference is required. Endpoint computation therefore
+uses the same kernel boundary reduction as the internal fragment.
+
+Parameterized/indexed higher declarations, higher constructor fields, multiple
+point/path constructors, dependent path-result declarations and multidimensional
+surface HITs remain rejected by this gate. Surface `match` on a HIT also remains
+rejected because ordinary branch syntax cannot supply the higher coherence
+method required by `HitElim`.
 
 ## Adversarial declarations and resource bounds
 
@@ -675,8 +681,9 @@ IDs across checking sessions.
 ## Staged implementation plan and acceptance gates
 
 Slices A/B retain staging validation. C adds a gated internal executable fragment,
-D adds gated dependent elimination, and E adds the scoped unparameterized-Circle
-composition rules described above. Slice F remains future work.
+D adds gated dependent elimination, E adds the scoped unparameterized-Circle
+composition rules, and F exposes exactly that Circle fragment through surface
+`data`, path names and path application.
 
 ### HIT Slice A — structurally checked metadata only
 
@@ -749,7 +756,8 @@ face caches, covers/diagonals, distinct higher heads agreeing on their boundary,
 dependent parameters/fields/indices, nested dimensions, structured quotation
 rechecking, malformed/cyclic raw terms, impossible-face scope errors, forged
 signatures, two-dimensional publication rejection and runtime resource errors.
-Surface Circle and surface ordinary matching on Higher families remain rejected.
+This C-era regression set predates F; scoped surface Circle is now accepted, while
+surface ordinary matching on Higher families remains rejected.
 Run `cargo test hit::runtime --locked` for the focused C tests.
 
 Slice C itself includes no HIT composition, parser extension, or surface HIT
@@ -786,13 +794,18 @@ HIT Kan structure remains future work beyond the Circle milestone.
 
 ### HIT Slice F — surface `data Circle`
 
-Only after A–E, classify point/path results, emit checked boundary metadata, and
-resolve higher names through path wrappers. Accept the target declaration and
-test endpoint computation through the public library. Add rejection tests for
-wrong owners, path-result misclassification, and unsupported dependent/multi-
-dimensional declarations. Keep HIT `match` rejected unless coherence syntax is
-also provided. Update README implementation claims only for the fragment that
-actually passes this gate.
+Implemented for the scoped Circle milestone. Surface `data` classifies by
+constructor result, emits the exact one-dimensional endpoint metadata for
+`loop : base == base`, and exposes higher names through path wrappers/direct
+higher path application. Public `CheckedProgram::check_surface` tests verify the
+target declaration, `loop`, path eta, and both endpoint computations in a program
+that also contains the ordinary Prelude.
+
+Rejection tests keep the boundary narrow: path-typed constructor arguments stay
+ordinary; parameterized higher declarations, higher fields, extra points, and
+wrong-owner/non-point endpoints are rejected. Ordinary surface `match` on Circle
+continues to fail because no coherence-method syntax exists. General surface HIT
+elaboration remains future work beyond this milestone.
 
 For each slice that changes Rust, require `cargo fmt --all -- --check`,
 `cargo clippy --all-targets --all-features -- -D warnings`, and

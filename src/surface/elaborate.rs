@@ -2,7 +2,11 @@ use super::ast::{
     DataDeclaration, Declaration, Dimension, Expr, Item, Pattern, Program as SurfaceProgram,
 };
 use crate::arena::Key;
-use crate::syntax::{ConstructorId, D, Program, Term, TermId};
+use crate::hit::{
+    BoundaryPiece, ConstructorRef, HigherConstructorDecl, HigherConstructorId,
+    PartialConstructorBoundary,
+};
+use crate::syntax::{ConstructorId, D, F, FamilyConstructors, Program, Term, TermId};
 use crate::{Error, Result};
 use std::collections::{HashMap, HashSet};
 
@@ -48,7 +52,7 @@ impl Elaborator {
         Ok(inductive)
     }
 
-    fn resolve_constructor(&self, name: &str) -> Result<ConstructorId> {
+    fn resolve_point_constructor(&self, name: &str) -> Result<ConstructorId> {
         let mut matches = self
             .core
             .constructors
@@ -61,10 +65,34 @@ impl Elaborator {
         if matches.next().is_some() {
             return Err(Error::plain(format!("ambiguous constructor '{name}'")));
         }
+        Ok(constructor)
+    }
+
+    fn resolve_constructor(&self, name: &str) -> Result<ConstructorId> {
+        let constructor = self.resolve_point_constructor(name)?;
         let owner = self.core.constructors[constructor.index()].inductive;
         self.core.inductives[owner.index()]
             .constructors
             .ordinary()?;
+        Ok(constructor)
+    }
+
+    fn resolve_higher_constructor(&self, name: &str) -> Result<HigherConstructorId> {
+        let mut matches = self
+            .core
+            .higher
+            .iter()
+            .filter(|constructor| constructor.name == name)
+            .map(|constructor| constructor.id);
+        let Some(constructor) = matches.next() else {
+            return Err(Error::plain(format!("unknown higher constructor '{name}'")));
+        };
+        if matches.next().is_some() {
+            return Err(Error::plain(format!(
+                "ambiguous higher constructor '{name}'"
+            )));
+        }
+        self.core.higher_constructor(constructor)?;
         Ok(constructor)
     }
 
@@ -78,6 +106,11 @@ impl Elaborator {
             || self
                 .core
                 .constructors
+                .iter()
+                .any(|constructor| constructor.name == name)
+            || self
+                .core
+                .higher
                 .iter()
                 .any(|constructor| constructor.name == name)
     }
@@ -224,34 +257,106 @@ impl Elaborator {
                 });
                 self.locals.push((name.clone(), ty.clone()));
             }
-            let (head, applied) = application_spine(&constructor.result);
-            if head != data.name || applied.len() != data.parameters.len() + data.indices.len() {
-                self.locals.truncate(saved);
-                return Err(Error::plain(format!(
-                    "constructor '{}' must return '{}' with all parameters and indices",
-                    constructor.name, data.name
-                )));
-            }
-            for ((parameter, _), actual) in data.parameters.iter().zip(&applied) {
-                if actual != &Expr::Name(parameter.clone()) {
+
+            if let Expr::Equality { left, right } = &constructor.result {
+                if !data.parameters.is_empty()
+                    || !data.indices.is_empty()
+                    || !constructor.arguments.is_empty()
+                {
+                    self.locals.truncate(saved);
+                    return Err(Error::plain(
+                        "surface higher constructors currently support only the unparameterized nullary Circle fragment",
+                    ));
+                }
+                let left_term = self.term(left)?;
+                let right_term = self.term(right)?;
+                let (left_head, left_args) = application_spine(left);
+                let (right_head, right_args) = application_spine(right);
+                let left_id = self.resolve_point_constructor(&left_head)?;
+                let right_id = self.resolve_point_constructor(&right_head)?;
+                let left_point = &self.core.constructors[left_id.index()];
+                let right_point = &self.core.constructors[right_id.index()];
+                if left_point.inductive != inductive
+                    || right_point.inductive != inductive
+                    || !left_args.is_empty()
+                    || !right_args.is_empty()
+                    || left_id != right_id
+                {
+                    self.locals.truncate(saved);
+                    return Err(Error::plain(
+                        "surface Circle path constructor endpoints must be the same earlier nullary point",
+                    ));
+                }
+                let members = match &self.core.inductives[inductive.index()].constructors {
+                    FamilyConstructors::Ordinary(points) if points.as_slice() == [left_id] => {
+                        vec![ConstructorRef::Point(left_id)]
+                    }
+                    _ => {
+                        self.locals.truncate(saved);
+                        return Err(Error::plain(
+                            "surface Circle requires exactly one earlier point constructor",
+                        ));
+                    }
+                };
+                self.core.inductives[inductive.index()].constructors =
+                    FamilyConstructors::Higher(members);
+                let id = HigherConstructorId::new(self.core.higher.len());
+                self.core.higher.push(HigherConstructorDecl {
+                    id,
+                    inductive,
+                    name: constructor.name.clone(),
+                    arguments: vec![],
+                    dimensions: vec!["i".into()],
+                    result_indices: vec![],
+                    boundary: PartialConstructorBoundary {
+                        pieces: vec![
+                            BoundaryPiece {
+                                face: F::Eq(D::Bound(0), D::Zero),
+                                term: left_term,
+                            },
+                            BoundaryPiece {
+                                face: F::Eq(D::Bound(0), D::One),
+                                term: right_term,
+                            },
+                        ],
+                    },
+                });
+                if let FamilyConstructors::Higher(members) =
+                    &mut self.core.inductives[inductive.index()].constructors
+                {
+                    members.push(ConstructorRef::Higher(id));
+                }
+            } else {
+                let (head, applied) = application_spine(&constructor.result);
+                if head != data.name || applied.len() != data.parameters.len() + data.indices.len()
+                {
                     self.locals.truncate(saved);
                     return Err(Error::plain(format!(
-                        "constructor '{}' changes data parameter '{}'",
-                        constructor.name, parameter
+                        "constructor '{}' must return '{}' with all parameters and indices",
+                        constructor.name, data.name
                     )));
                 }
+                for ((parameter, _), actual) in data.parameters.iter().zip(&applied) {
+                    if actual != &Expr::Name(parameter.clone()) {
+                        self.locals.truncate(saved);
+                        return Err(Error::plain(format!(
+                            "constructor '{}' changes data parameter '{}'",
+                            constructor.name, parameter
+                        )));
+                    }
+                }
+                let result_indices = applied[data.parameters.len()..]
+                    .iter()
+                    .map(|index| self.term(index))
+                    .collect::<Result<Vec<_>>>()?;
+                self.core.push_constructor(
+                    inductive,
+                    constructor.name.clone(),
+                    arguments,
+                    result_indices,
+                    recursive_arguments,
+                );
             }
-            let result_indices = applied[data.parameters.len()..]
-                .iter()
-                .map(|index| self.term(index))
-                .collect::<Result<Vec<_>>>()?;
-            self.core.push_constructor(
-                inductive,
-                constructor.name.clone(),
-                arguments,
-                result_indices,
-                recursive_arguments,
-            );
             self.locals.truncate(saved + data.parameters.len());
         }
         self.locals.truncate(saved);
@@ -489,8 +594,26 @@ impl Elaborator {
                     Term::Global(*index)
                 } else if let Ok(inductive) = self.resolve_inductive(name) {
                     Term::Inductive(inductive)
-                } else if let Ok(constructor) = self.resolve_constructor(name) {
+                } else if let Ok(constructor) = self.resolve_point_constructor(name) {
                     Term::Constructor(constructor)
+                } else if let Ok(constructor) = self.resolve_higher_constructor(name) {
+                    let higher = self.core.higher[constructor.index()].clone();
+                    let family = &self.core.inductives[higher.inductive.index()];
+                    if !family.parameters.is_empty() || !higher.arguments.is_empty() {
+                        return Err(Error::plain(
+                            "surface higher-constructor terms currently support only nullary Circle",
+                        ));
+                    }
+                    let body = self.core.alloc(
+                        Term::HigherApp {
+                            constructor,
+                            parameters: vec![],
+                            arguments: vec![],
+                            dimensions: vec![D::Bound(0)],
+                        },
+                        0,
+                    );
+                    Term::PLam(body)
                 } else if name == "Bool" {
                     Term::Bool
                 } else if name == "true" {
@@ -535,7 +658,25 @@ impl Elaborator {
             }
             Expr::PathApply { path, dimension } => {
                 let dimension = self.dimension(dimension)?;
-                Term::PApp(self.term(path)?, dimension)
+                if let Expr::Name(name) = path.as_ref()
+                    && let Ok(constructor) = self.resolve_higher_constructor(name)
+                {
+                    let higher = self.core.higher[constructor.index()].clone();
+                    let family = &self.core.inductives[higher.inductive.index()];
+                    if !family.parameters.is_empty() || !higher.arguments.is_empty() {
+                        return Err(Error::plain(
+                            "surface higher-constructor application currently supports only nullary Circle",
+                        ));
+                    }
+                    Term::HigherApp {
+                        constructor,
+                        parameters: vec![],
+                        arguments: vec![],
+                        dimensions: vec![dimension],
+                    }
+                } else {
+                    Term::PApp(self.term(path)?, dimension)
+                }
             }
             Expr::Universe(level) => Term::U(*level),
             Expr::Bool => Term::Bool,
@@ -636,7 +777,7 @@ impl Elaborator {
         Ok(self.core.alloc(term, 0))
     }
 
-    fn infer_metadata_name(&self, name: &str) -> Result<Expr> {
+    fn infer_metadata_name(&mut self, name: &str) -> Result<Expr> {
         if let Ok(inductive) = self.resolve_inductive(name) {
             let declaration = &self.core.inductives[inductive.index()];
             let mut result = Expr::Universe(declaration.universe);
@@ -653,6 +794,48 @@ impl Elaborator {
                 };
             }
             return Ok(result);
+        }
+        if let Ok(constructor) = self.resolve_point_constructor(name) {
+            let constructor = self.core.constructors[constructor.index()].clone();
+            let family = self.core.inductives[constructor.inductive.index()].clone();
+            if family.parameters.is_empty()
+                && family.indices.is_empty()
+                && constructor.arguments.is_empty()
+                && constructor.result_indices.is_empty()
+            {
+                return Ok(Expr::Name(family.name));
+            }
+        }
+        if let Ok(constructor) = self.resolve_higher_constructor(name) {
+            let higher = self.core.higher[constructor.index()].clone();
+            let family = self.core.inductives[higher.inductive.index()].clone();
+            if family.parameters.is_empty()
+                && family.indices.is_empty()
+                && higher.arguments.is_empty()
+                && higher.result_indices.is_empty()
+                && higher.boundary.pieces.len() == 2
+            {
+                let mut left = None;
+                let mut right = None;
+                for piece in higher.boundary.pieces {
+                    let endpoint = match piece.face {
+                        F::Eq(D::Bound(0), D::Zero) | F::Eq(D::Zero, D::Bound(0)) => &mut left,
+                        F::Eq(D::Bound(0), D::One) | F::Eq(D::One, D::Bound(0)) => &mut right,
+                        _ => continue,
+                    };
+                    if let Term::Constructor(point) = self.core.terms.get(piece.term).term {
+                        *endpoint = Some(Expr::Name(
+                            self.core.constructors[point.index()].name.clone(),
+                        ));
+                    }
+                }
+                if let (Some(left), Some(right)) = (left, right) {
+                    return Ok(Expr::Equality {
+                        left: Box::new(left),
+                        right: Box::new(right),
+                    });
+                }
+            }
         }
         match name {
             "Bool" | "Nat" => return Ok(Expr::Universe(0)),
