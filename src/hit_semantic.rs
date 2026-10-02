@@ -197,14 +197,16 @@ fn validate_with_limits(
                     ty: e.ty,
                 })
                 .collect(),
-            constructors: family
-                .constructors
-                .iter()
-                .filter_map(|member| match member {
-                    ConstructorRef::Point(id) => Some(*id),
-                    ConstructorRef::Higher(_) => None,
-                })
-                .collect(),
+            constructors: crate::syntax::FamilyConstructors::Ordinary(
+                family
+                    .constructors
+                    .iter()
+                    .filter_map(|member| match member {
+                        ConstructorRef::Point(id) => Some(*id),
+                        ConstructorRef::Higher(_) => None,
+                    })
+                    .collect(),
+            ),
         });
     }
     for point in &raw.points {

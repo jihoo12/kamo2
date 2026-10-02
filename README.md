@@ -227,8 +227,10 @@ should reuse Kamo's existing path/composition machinery.
 
 The [higher-inductive design](docs/higher-inductive-types.md) specifies proposed
 boundary metadata and staged implementation gates. Structurally and semantically
-checked HIT signature staging now exists in an isolated layer; executable higher
-constructors and surface HIT declarations remain unimplemented.
+checked HIT signature staging has an internal, gated one-dimensional core
+fragment for higher applications and boundary reduction. HIT elimination,
+HIT composition, and surface HIT declarations remain unimplemented; Circle is
+not yet a surface language feature.
 
 ## Current core syntax
 

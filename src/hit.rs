@@ -1,10 +1,12 @@
-//! Slices A/B: isolated, structurally and semantically checked higher metadata.
-//!
-//! IDs resolve within this staging arena/tables, never an executable Program.
-//! The certificate borrows the entire raw input immutably; there is no export
-//! to Program/CheckedProgram. Semantic validation uses a private temporary view.
-// This subsystem intentionally has no production caller until a later slice.
+//! Structurally and semantically checked staging, with an explicit Slice C
+//! publication gate for one-dimensional nonrecursive signatures.
+//! Certificates borrow immutable syntax and retain no semantic arena IDs.
+//! Surface HIT declarations, elimination and HIT composition remain unavailable.
 #![allow(dead_code)]
+
+#[path = "hit_runtime.rs"]
+mod runtime;
+pub(crate) use runtime::validate_executable;
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,7 +24,7 @@ pub(crate) enum ConstructorRef {
     Higher(HigherConstructorId),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct HigherFamilyDecl {
     pub id: InductiveId,
     pub name: String,
@@ -34,7 +36,7 @@ pub(crate) struct HigherFamilyDecl {
 
 pub(crate) type DimensionTelescope = Vec<String>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct HigherConstructorDecl {
     pub id: HigherConstructorId,
     pub inductive: InductiveId,
@@ -45,12 +47,12 @@ pub(crate) struct HigherConstructorDecl {
     pub boundary: PartialConstructorBoundary,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PartialConstructorBoundary {
     pub pieces: Vec<BoundaryPiece>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct BoundaryPiece {
     pub face: F,
     pub term: TermId,
@@ -66,13 +68,13 @@ pub(crate) struct RawHigherMetadata {
 
 /// Not a semantic certificate. The private field prevents unchecked creation;
 /// its lifetime prevents mutation of any certified term or declaration.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct StructurallyCheckedHigherMetadata<'a> {
     raw: &'a RawHigherMetadata,
 }
 
 /// A persistent fact only: no session-local semantic IDs or executable program.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct SemanticallyCheckedHigherMetadata<'a> {
     raw: &'a RawHigherMetadata,
 }
@@ -580,7 +582,7 @@ mod tests {
         }
     }
 
-    fn circle() -> RawHigherMetadata {
+    pub(super) fn circle() -> RawHigherMetadata {
         let mut raw = RawHigherMetadata::default();
         add_circle(&mut raw);
         raw

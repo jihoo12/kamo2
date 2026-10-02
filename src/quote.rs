@@ -1,3 +1,5 @@
+#[path = "quote_core.rs"]
+mod core;
 use crate::arena::Key;
 use crate::eval::{Engine, Val, ValId};
 use crate::face::{Dim, FaceId};
@@ -121,6 +123,38 @@ impl Engine<'_> {
             Val::Nat => "Nat".into(),
             Val::Inductive(id) => self.program.inductives[id.index()].name.clone(),
             Val::Constructor(id) => self.program.constructors[id.index()].name.clone(),
+            Val::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } => {
+                let h = self.program.higher_constructor(constructor)?.clone();
+                let family = self.program.inductives[h.inductive.index()].clone();
+                let mut env = self.env(crate::eval::Env::default());
+                let mut terms = Vec::new();
+                for (value, entry) in parameters
+                    .into_iter()
+                    .chain(arguments)
+                    .zip(family.parameters.iter().chain(&h.arguments))
+                {
+                    let ty = self.thunk(entry.ty, env);
+                    terms.push(self.quote_inner(value, Some(ty), face, n)?);
+                    let mut next = self.environment(env);
+                    next.terms.push(value);
+                    env = self.env(next);
+                }
+                let dims = dimensions
+                    .into_iter()
+                    .map(|d| n.dim(d))
+                    .collect::<Result<Vec<_>>>()?;
+                format!(
+                    "(higher {} ({}) ({}))",
+                    h.name,
+                    terms.join(" "),
+                    dims.join(" ")
+                )
+            }
             Val::True => "true".into(),
             Val::False => "false".into(),
             Val::Zero => "zero".into(),
@@ -232,12 +266,12 @@ impl Engine<'_> {
                 }
                 let declaration = self.program.inductives[inductive.index()].clone();
                 let motive_type =
-                    self.generic_motive_type(inductive, &parameters, declaration.universe);
+                    self.generic_motive_type(inductive, &parameters, declaration.universe)?;
                 let motive_term = self.quote_inner(motive, Some(motive_type), face, n)?;
                 let mut method_terms = Vec::with_capacity(methods.len());
                 for (method, constructor) in methods
                     .into_iter()
-                    .zip(declaration.constructors.iter().copied())
+                    .zip(declaration.constructors.ordinary()?.iter().copied())
                 {
                     let method_type =
                         self.generic_method_type(constructor, &parameters, motive, face)?;

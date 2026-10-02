@@ -61,6 +61,10 @@ impl Elaborator {
         if matches.next().is_some() {
             return Err(Error::plain(format!("ambiguous constructor '{name}'")));
         }
+        let owner = self.core.constructors[constructor.index()].inductive;
+        self.core.inductives[owner.index()]
+            .constructors
+            .ordinary()?;
         Ok(constructor)
     }
 
@@ -149,6 +153,7 @@ impl Elaborator {
         let inductive = &self.core.inductives[family.index()];
         if let Some(missing) = inductive
             .constructors
+            .ordinary()?
             .iter()
             .find(|constructor| !seen.contains(constructor))
         {
@@ -353,8 +358,8 @@ impl Elaborator {
         self.locals.truncate(saved);
         let motive = self.lambda_n(motive_body?, motive_names.len());
 
-        let mut methods = Vec::with_capacity(declaration.constructors.len());
-        for constructor_id in &declaration.constructors {
+        let mut methods = Vec::with_capacity(declaration.constructors.ordinary()?.len());
+        for constructor_id in declaration.constructors.ordinary()? {
             let constructor = self.core.constructors[constructor_id.index()].clone();
             let branch = branches
                 .iter()
@@ -1090,6 +1095,39 @@ mod pattern_tests {
     use super::*;
     use crate::surface::ast::{MatchBranch, Pattern};
     use crate::syntax::TelescopeEntry;
+
+    #[test]
+    fn higher_family_points_cannot_enter_ordinary_surface_resolution_or_matching() {
+        let (mut core, id) = user_nat_core();
+        let ids = core.inductives[id.index()]
+            .constructors
+            .ordinary()
+            .unwrap()
+            .iter()
+            .copied()
+            .map(crate::hit::ConstructorRef::Point)
+            .collect();
+        core.inductives[id.index()].constructors = crate::syntax::FamilyConstructors::Higher(ids);
+        let elaborator = Elaborator {
+            core,
+            ..Elaborator::default()
+        };
+        assert!(
+            elaborator
+                .resolve_constructor("uzero")
+                .unwrap_err()
+                .message
+                .contains("ordinary operation")
+        );
+        let branches = vec![MatchBranch {
+            pattern: Pattern::Constructor {
+                name: "uzero".into(),
+                arguments: vec![],
+            },
+            body: Expr::Name("uzero".into()),
+        }];
+        assert!(elaborator.validate_constructor_branches(&branches).is_err());
+    }
 
     fn user_nat_core() -> (Program, crate::syntax::InductiveId) {
         let mut core = Program::default();

@@ -2,6 +2,7 @@
 use crate::arena::{Arena, Key, key};
 use crate::face::{Dim, FaceId, Faces};
 use crate::hash::IdMap as HashMap;
+use crate::hit::HigherConstructorId;
 use crate::syntax::{ConstructorId, D, F, InductiveId, Program, TelescopeEntry, Term, TermId};
 use crate::{Error, Result, Statistics};
 key!(ValId);
@@ -53,6 +54,12 @@ pub(crate) enum Val {
     Nat,
     Inductive(InductiveId),
     Constructor(ConstructorId),
+    HigherApp {
+        constructor: HigherConstructorId,
+        parameters: Vec<ValId>,
+        arguments: Vec<ValId>,
+        dimensions: Vec<Dim>,
+    },
     Elim {
         inductive: InductiveId,
         parameters: Vec<ValId>,
@@ -404,6 +411,17 @@ impl<'a> Engine<'a> {
             | Val::True
             | Val::False
             | Val::Zero => return v,
+            Val::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } => Val::HigherApp {
+                constructor,
+                parameters: parameters.into_iter().map(|v| self.sub(v, s)).collect(),
+                arguments: arguments.into_iter().map(|v| self.sub(v, s)).collect(),
+                dimensions: dimensions.into_iter().map(|d| self.sub_dim(s, d)).collect(),
+            },
             Val::Pi(a, b) => {
                 let a = self.sub(a, s);
                 let b = self.sub_binder(b, s, false);
@@ -540,6 +558,17 @@ impl<'a> Engine<'a> {
             Term::Nat => Val::Nat,
             Term::Inductive(id) => Val::Inductive(id),
             Term::Constructor(id) => Val::Constructor(id),
+            Term::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } => Val::HigherApp {
+                constructor,
+                parameters: parameters.into_iter().map(|t| self.thunk(t, e)).collect(),
+                arguments: arguments.into_iter().map(|t| self.thunk(t, e)).collect(),
+                dimensions: dimensions.into_iter().map(|d| self.dim(d, e)).collect(),
+            },
             Term::Elim {
                 inductive,
                 parameters,
@@ -888,6 +917,14 @@ impl<'a> Engine<'a> {
         loop {
             self.tick()?;
             let next = match self.get(v) {
+                Val::HigherApp {
+                    constructor,
+                    parameters,
+                    arguments,
+                    dimensions,
+                } => {
+                    self.higher_boundary(constructor, &parameters, &arguments, &dimensions, face)?
+                }
                 Val::Susp(t, e) => Some(self.unfold(t, e)),
                 Val::Sub(a, s) => Some(self.push(a, s)),
                 Val::App(f, a) => {
@@ -946,6 +983,12 @@ impl<'a> Engine<'a> {
                     indices: _,
                     scrutinee,
                 } => {
+                    self.program
+                        .inductives
+                        .get(inductive.index())
+                        .ok_or_else(|| Error::plain("missing eliminator family"))?
+                        .constructors
+                        .ordinary()?;
                     let scrutinee = self.force(scrutinee, face)?;
                     let (head, spine) = self.application_spine_forced(scrutinee, face)?;
                     let Val::Constructor(constructor_id) = self.get(head) else {
@@ -967,6 +1010,7 @@ impl<'a> Engine<'a> {
                     let arguments = &spine[parameter_count..];
                     let method_index = family
                         .constructors
+                        .ordinary()?
                         .iter()
                         .position(|id| *id == constructor_id)
                         .ok_or_else(|| {
@@ -1216,6 +1260,12 @@ impl<'a> Engine<'a> {
             Val::Var(_, Some(ty)) => Ok(ty),
             Val::Inductive(id) => Ok(self.inductive_type(id)),
             Val::Constructor(id) => Ok(self.constructor_type(id)),
+            Val::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } => self.higher_result(constructor, &parameters, &arguments, &dimensions),
             Val::App(f, a) => {
                 let ty = self.neutral_type(f, face)?;
                 let ty = self.force(ty, face)?;
@@ -1444,6 +1494,9 @@ impl<'a> Engine<'a> {
         family_arguments: Vec<ValId>,
     ) -> Result<Option<ValId>> {
         let family = self.program.inductives[inductive.index()].clone();
+        if family.constructors.is_higher() {
+            return Ok(None);
+        }
         let parameter_count = family.parameters.len();
         let index_count = family.indices.len();
         if family_arguments.len() != parameter_count + index_count {

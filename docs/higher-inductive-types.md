@@ -1,10 +1,11 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **Slices A/B implemented: structurally and semantically checked HIT
-signature staging only**. Higher-constructor evaluation, elimination, composition,
-and surface HIT declarations remain unimplemented. Ordinary inductives and homogeneous surface
+Status: **Slices A/B/C implemented**, with an internal one-dimensional,
+nonrecursive higher-application and boundary-reduction fragment. HIT elimination,
+HIT composition, mixed Ordinary/Higher signature imports, and surface HIT
+declarations remain unimplemented. Ordinary inductives and homogeneous surface
 paths are implemented; they do not already provide higher constructors. The
-staging subsystem changes no mathematical behavior of existing programs.
+new core fragment changes no mathematical behavior of existing ordinary programs.
 
 ## Existing boundary and required audit obligations
 
@@ -48,7 +49,7 @@ substitution of terms, dimensions, and faces.
 
 Choose **separate point and higher constructor records and ID spaces**, with a
 single ordered, tagged membership list on a HIT family. The following is the
-eventual integrated schema; Slice A keeps its HIT side in separate staging tables:
+integrated schema used by C; A/B still validate separate staging tables:
 
 ```text
 ConstructorRef = Point(ConstructorId) | Higher(HigherConstructorId)
@@ -107,29 +108,28 @@ is atomic after validation, with no mutable metadata behind the certificate.
 (reusing `ConstructorDecl`), higher table, and `HigherFamilyDecl` table. Each
 staged family has one ordered `Vec<ConstructorRef>`; higher IDs have a distinct
 Rust type from point IDs. All IDs resolve locally within these staging tables.
-There is no associated executable `Program` available to callers. The module is
-crate-private and intentionally has no production consumer yet. Slice B creates
-a private session-local point-signature view solely for semantic validation,
-as detailed below.
+A/B do not publish an executable program. The crate-private C gate
+`SemanticallyCheckedHigherMetadata::publish` explicitly checks the executable
+capability and copies metadata into a tagged program. Slice B's separate
+point-signature view is still validation-only and never escapes.
 
 `RawHigherMetadata::validate(&self)` returns a
 `StructurallyCheckedHigherMetadata<'_>` only after the entire structural pass
 succeeds. The certificate's private field holds an immutable borrow of the raw
 arena and all its tables; Rust prevents mutation for the certificate's lifetime.
-Accessors expose only shared data. Neither type converts into `Program` or
-`CheckedProgram`. Only the structural certificate is accepted by the Slice B
-validation entrypoint; neither certificate is an executable signature. This is
-an API gate, not a promise that callers will remember to skip HIT evaluation.
+Accessors expose only shared data. Only the structural certificate is accepted
+by B; only the semantic certificate offers C's explicit one-dimensional
+publication gate. No certificate itself is executable. A published raw core
+program is revalidated before becoming an immutable `CheckedProgram`.
 
 The consumer audit covered `validate_inductives`, semantic declaration checking,
 generic eliminator checking and method generation, evaluator iota and
 `compose_inductive`, constructor conversion/type recovery, quotation of heads
 and eliminator methods, and surface constructor resolution, matching and
-exhaustiveness. All consume the unchanged ordinary `Program` tables. No changes
-were needed in those consumers. The eventual `FamilyConstructors` migration
-above belongs to C or later, together with executable publication and
-ordinary-only dispatch gates; neither A nor B changes
-`InductiveDecl.constructors: Vec<ConstructorId>`.
+exhaustiveness. A/B left those consumers unchanged. C now migrates
+`InductiveDecl.constructors` to `FamilyConstructors` and requires an explicit
+`ordinary()` check at ordinary-only consumers. There is no authoritative
+point-only list alongside a Higher family's tagged membership.
 
 The structural grammar is exactly the ordinary metadata term whitelist:
 `Var`, `Pi`, `Sigma`, `App`, `Ann`, `Path`, `Suc`, universes, primitive Bool/Nat
@@ -204,9 +204,8 @@ This incomplete point-only view never escapes the function, never becomes a
 `CheckedProgram`, and is never stored in either certificate. A's unchanged
 whitelist excludes elimination, composition and globals from all reachable
 syntax. Therefore no user-visible exhaustiveness/elimination/composition claim
-can use the missing higher members. The executable `Program` representation,
-ordinary checker implementation, evaluator, quotation, and surface elaborator
-remain unchanged; `check.rs` only connects the new validation module.
+can use the missing higher members. B itself changes none of the executable rules. C's separately documented
+integration changes the representation and adds runtime dispatch gates.
 
 The bridge first reuses `check_inductive_declarations` for family telescopes and
 point argument sorts/universes/dependent result indices. Higher argument sorts
@@ -247,15 +246,15 @@ conversion, fuel, node and bridge-budget errors propagate without certification.
 The node cap uses the existing engine allocation-check convention, with checks
 at operation boundaries and before return; it is not an exact byte-memory cap.
 
-Circle receives a semantic certificate but remains non-executable. Tests cover
+B alone gives Circle a semantic certificate; C publication is a separate step. Tests cover
 independent sessions; dependent parameter/argument/index telescopes; point and
 higher sort/universe failures; incorrect result/boundary indices; coherent and
 incoherent complete 2D perimeters; disjunctive/clipped-diagonal coverage;
 dimension order; sparse/unreachable syntax; aggregate pairs; and solver/fuel/
 node/work exhaustion. Empty, one-sided, `Bot`, `Top`, unrestricted diagonal and
 ill-typed fixtures continue to pass A and fail B for their semantic defect.
-Surface Circle remains rejected after certification. These certificates do not
-authorize the future term, elimination or composition rules.
+Surface Circle remains rejected after certification. B certification does not itself
+authorize execution, elimination or composition. C requires an additional gate.
 
 ## Scope convention and initial fragment
 
@@ -398,7 +397,7 @@ substitutions must preserve typing, coverage, and agreement. Identifying
 dimensions can activate additional pieces; agreement makes this unambiguous.
 Do not cancel delayed substitutions while keeping the old face context.
 
-## Constructor terms and values (future Slice C)
+## Constructor terms and values (Slice C implemented)
 
 `Term::Constructor(ConstructorId)` is sufficient for `base` and insufficient for
 `loop`'s interior. Preserve its point-only meaning. Introduce a saturated form:
@@ -441,7 +440,7 @@ face-sensitive forcing all need explicit cases. Same-head congruence can compare
 arguments/dimensions, but higher constructors are not globally disjoint or
 injective: boundary reduction may equate distinct heads. Quotation must retain
 generic dimension arguments and be recheckable. Cache keys must preserve face
-context and substituted arguments. None of these changes are part of this task.
+context and substituted arguments. These cases are implemented in C; higher elimination and Kan rules remain future work.
 
 ## Dependent elimination and coherence (future Slice D)
 
@@ -642,7 +641,8 @@ IDs across checking sessions.
 
 ## Staged implementation plan and acceptance gates
 
-Slices A/B are implemented in staging only. Slices C–F remain future work.
+Slices A/B retain staging validation. C adds a gated internal executable fragment.
+Slices D–F remain future work.
 
 ### HIT Slice A — structurally checked metadata only
 
@@ -667,13 +667,59 @@ future multi-dimensional elimination nor Kan rules. No surface HIT acceptance.
 
 ### HIT Slice C — higher applications and boundary reduction
 
-Introduce saturated `HigherApp` terms/values, checked path wrappers, scoped
-substitution, forcing, quotation and conversion. Gate executable signatures to
-the supported one-dimensional nonrecursive fragment. Route Higher families away
-from ordinary `Elim`, pattern matching, and `compose_inductive` before enabling
-any such terms. Test generic `loop @ i`, both endpoints, face restrictions,
-disjunctive contexts, capture avoidance, conversion after forcing/substitution,
-and normalize/recheck in both modes. No new HIT composition or eliminator yet.
+Implemented: saturated `HigherApp` terms/values, checked core path wrappers,
+capture-avoiding substitution, boundary forcing, quotation/type recovery and
+conversion. The executable gate accepts one-dimensional nonrecursive signatures
+only. Higher families cannot enter ordinary elimination, surface point
+resolution/matching, or ordinary constructor-directed composition.
+
+C uses `SemanticallyCheckedHigherMetadata::publish` to copy validated metadata,
+preserving family, point, higher and term IDs. It does not expose B's temporary
+view. `Program::validate_inductives` dispatches tagged Higher programs through
+A/B again, so internal forged programs cannot bypass semantic validation or the
+dimension limit. Publication currently produces all-Higher signatures; combining
+ordinary family imports with them is deliberately rejected rather than
+misclassifying a family. Standalone ordinary programs retain their existing
+validation/recursion support. Core runtime arguments can use the existing
+primitive Nat/Bool and function/pair/path forms.
+
+An iterative, cycle-aware executable-term preflight validates declaration IDs,
+term/dimension scopes (including impossible faces), arities and global ordering
+before checking. It uses A's 100,000 term visits, 32,768 face visits, depth 128 and
+200,000 work units, plus a 100,000-slot executable arena cap. Runtime evaluation,
+conversion and normalization retain the existing fuel/node limits.
+
+Forcing instantiates the boundary environment from parameters, arguments and
+dimensions and reduces only when the ambient face entails an individual piece.
+Otherwise the generic higher head remains. Typed conversion splits disjunctive
+faces and uses dependent same-head argument congruence after boundary forcing;
+there is no higher-head injectivity or disjointness rule. Substitution traverses
+both term and dimension payloads, including delayed/composed substitutions, and
+the existing face-sensitive cache keys are preserved.
+
+Ordinary composition returns blocked `Com` on Higher families, including a
+point cap. Existing universal source=target and active-tube equations still
+apply; no higher Kan/composition rule is claimed. Ordinary `Elim` is rejected
+by checking, method/motive construction, evaluation and quotation, even on base.
+
+Text quotation retains generic higher payloads using diagnostic
+`(higher name (terms...) (dimensions...))` output; this is not new parser syntax.
+The internal `quote_core` path produces scoped core syntax for normalize/recheck
+without parsing that diagnostic text. Its limits are depth 32, 100,000 output
+term nodes, and 32,768 aggregate face nodes with face depth 128. It supports the
+all-Higher C fragment; structured ordinary-eliminator quotation is outside this
+new API. Existing ordinary text quotation is unchanged.
+
+Regressions cover both evaluation modes, Circle endpoints/interior, shared
+face caches, covers/diagonals, distinct higher heads agreeing on their boundary,
+dependent parameters/fields/indices, nested dimensions, structured quotation
+rechecking, malformed/cyclic raw terms, impossible-face scope errors, forged
+signatures, two-dimensional publication rejection and runtime resource errors.
+Surface Circle and surface ordinary matching on Higher families remain rejected.
+Run `cargo test hit::runtime --locked` for the focused C tests.
+
+No HIT eliminator, HIT composition, parser extension, or surface HIT declaration
+is included. This intermediate core is not a complete computational HIT calculus.
 
 ### HIT Slice D — dependent eliminator coherence
 

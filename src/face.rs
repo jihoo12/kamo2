@@ -289,6 +289,43 @@ impl Partition {
     }
 }
 
+impl Faces {
+    pub(crate) fn to_syntax(
+        &self,
+        f: FaceId,
+        dim: &impl Fn(Dim) -> Result<crate::syntax::D>,
+        remaining: &mut usize,
+    ) -> Result<crate::syntax::F> {
+        fn visit(
+            faces: &Faces,
+            f: FaceId,
+            dim: &impl Fn(Dim) -> Result<crate::syntax::D>,
+            depth: usize,
+            remaining: &mut usize,
+        ) -> Result<crate::syntax::F> {
+            use crate::syntax::F;
+            if depth > 128 || *remaining == 0 {
+                return Err(Error::plain("face quotation budget exhausted"));
+            }
+            *remaining -= 1;
+            Ok(match faces.nodes.get(f) {
+                Face::Top => F::Top,
+                Face::Bot => F::Bot,
+                Face::Eq(a, b) => F::Eq(dim(*a)?, dim(*b)?),
+                Face::And(a, b) => F::And(
+                    Box::new(visit(faces, *a, dim, depth + 1, remaining)?),
+                    Box::new(visit(faces, *b, dim, depth + 1, remaining)?),
+                ),
+                Face::Or(a, b) => F::Or(
+                    Box::new(visit(faces, *a, dim, depth + 1, remaining)?),
+                    Box::new(visit(faces, *b, dim, depth + 1, remaining)?),
+                ),
+            })
+        }
+        visit(self, f, dim, 0, remaining)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -17,6 +17,9 @@ struct Context {
 impl Engine<'_> {
     pub fn check_inductive_declarations(&mut self) -> Result<()> {
         for family in self.program.inductives.clone() {
+            if family.constructors.is_higher() {
+                continue;
+            }
             let env = self.env(Env::default());
             let mut context = Context {
                 env,
@@ -35,7 +38,7 @@ impl Engine<'_> {
                 let (next, _) = self.extend(&context, ty);
                 context = next;
             }
-            for constructor_id in family.constructors {
+            for constructor_id in family.constructors.ordinary()? {
                 let constructor = self.program.constructors[constructor_id.index()].clone();
                 let env = self.env(Env::default());
                 let mut constructor_context = Context {
@@ -225,7 +228,14 @@ impl Engine<'_> {
     fn infer(&mut self, t: TermId, ctx: &Context) -> Result<ValId> {
         self.tick()?;
         let ty = match self.program.terms.get(t).term.clone() {
-            Term::Var(i) => return Ok(ctx.types[ctx.types.len() - 1 - i]),
+            Term::Var(i) => {
+                return i
+                    .checked_add(1)
+                    .and_then(|n| ctx.types.len().checked_sub(n))
+                    .and_then(|j| ctx.types.get(j))
+                    .copied()
+                    .ok_or_else(|| self.error(t, "escaped term variable"));
+            }
             Term::Global(i) => {
                 let e = self.env(Env::default());
                 return Ok(self.thunk(self.program.decls[i].ty, e));
@@ -237,6 +247,60 @@ impl Engine<'_> {
             Term::Bool | Term::Nat => Val::U(0),
             Term::Inductive(id) => return Ok(self.inductive_type(id)),
             Term::Constructor(id) => return Ok(self.constructor_type(id)),
+            Term::HigherApp {
+                constructor,
+                parameters,
+                arguments,
+                dimensions,
+            } => {
+                let h = self.program.higher_constructor(constructor)?.clone();
+                let family = self
+                    .program
+                    .inductives
+                    .get(h.inductive.index())
+                    .ok_or_else(|| Error::plain("missing higher owner"))?
+                    .clone();
+                if parameters.len() != family.parameters.len()
+                    || arguments.len() != h.arguments.len()
+                    || dimensions.len() != 1
+                {
+                    return Err(self.error(t, "higher application arity mismatch"));
+                }
+                let dimension_count = self.environment(ctx.env).dims.len();
+                for d in &dimensions {
+                    if matches!(d, crate::syntax::D::Bound(i) if *i >= dimension_count) {
+                        return Err(self.error(t, "escaped higher application dimension"));
+                    }
+                }
+                let mut env = self.env(Env::default());
+                let mut values = Vec::new();
+                for (argument, entry) in parameters
+                    .iter()
+                    .chain(&arguments)
+                    .zip(family.parameters.iter().chain(&h.arguments))
+                {
+                    if argument.index() >= self.program.terms.len() {
+                        return Err(self.error(t, "invalid higher argument term ID"));
+                    }
+                    let ty = self.thunk(entry.ty, env);
+                    self.check(*argument, ty, ctx)?;
+                    let value = self.thunk(*argument, ctx.env);
+                    values.push(value);
+                    let mut next = self.environment(env);
+                    next.terms.push(value);
+                    env = self.env(next);
+                }
+                let ds = dimensions
+                    .into_iter()
+                    .map(|d| self.dim(d, ctx.env))
+                    .collect::<Vec<_>>();
+                return self.higher_result(
+                    constructor,
+                    &values[..parameters.len()],
+                    &values[parameters.len()..],
+                    &ds,
+                );
+            }
             Term::Elim {
                 inductive,
                 parameters,
@@ -246,13 +310,14 @@ impl Engine<'_> {
                 scrutinee,
             } => {
                 let declaration = self.program.inductives[inductive.index()].clone();
+                declaration.constructors.ordinary()?;
                 if parameters.len() != declaration.parameters.len() {
                     return Err(self.error(t, "wrong number of inductive parameters"));
                 }
                 if indices.len() != declaration.indices.len() {
                     return Err(self.error(t, "wrong number of inductive indices"));
                 }
-                if methods.len() != declaration.constructors.len() {
+                if methods.len() != declaration.constructors.ordinary()?.len() {
                     return Err(self.error(t, "wrong number of eliminator methods"));
                 }
 
@@ -285,13 +350,13 @@ impl Engine<'_> {
                 self.check(scrutinee, family, ctx)?;
 
                 let motive_type =
-                    self.generic_motive_type(inductive, &parameter_values, declaration.universe);
+                    self.generic_motive_type(inductive, &parameter_values, declaration.universe)?;
                 self.check(motive, motive_type, ctx)?;
                 let motive_value = self.thunk(motive, ctx.env);
 
                 for (method, constructor) in methods
                     .into_iter()
-                    .zip(declaration.constructors.iter().copied())
+                    .zip(declaration.constructors.ordinary()?.iter().copied())
                 {
                     let method_type = self.generic_method_type(
                         constructor,
@@ -599,6 +664,9 @@ impl Engine<'_> {
         face: FaceId,
     ) -> Result<ValId> {
         let constructor = self.program.constructors[constructor_id.index()].clone();
+        self.program.inductives[constructor.inductive.index()]
+            .constructors
+            .ordinary()?;
         let mut env = Env::default();
         env.terms.extend_from_slice(parameters);
         let env = self.env(env);
@@ -677,19 +745,20 @@ impl Engine<'_> {
         inductive: crate::syntax::InductiveId,
         parameters: &[ValId],
         universe: u32,
-    ) -> ValId {
+    ) -> Result<ValId> {
         let declaration = self.program.inductives[inductive.index()].clone();
+        declaration.constructors.ordinary()?;
         let mut env = Env::default();
         env.terms.extend_from_slice(parameters);
         let env = self.env(env);
-        self.bind_generic_motive_indices(
+        Ok(self.bind_generic_motive_indices(
             inductive,
             parameters,
             &declaration.indices,
             0,
             env,
             universe,
-        )
+        ))
     }
 
     fn bind_generic_motive_indices(
@@ -855,6 +924,7 @@ impl Engine<'_> {
             (Val::U(a), Val::U(b)) => Ok(a == b),
             (Val::Inductive(a), Val::Inductive(b)) => Ok(a == b),
             (Val::Constructor(a), Val::Constructor(b)) => Ok(a == b),
+            (Val::HigherApp { .. }, Val::HigherApp { .. }) => self.higher_congruent(a, b, face),
             (Val::Bool, Val::Bool)
             | (Val::Nat, Val::Nat)
             | (Val::True, Val::True)

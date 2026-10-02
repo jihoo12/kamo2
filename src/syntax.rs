@@ -1,4 +1,5 @@
 use crate::arena::{Arena, Key, key};
+use crate::hit::{ConstructorRef, HigherConstructorDecl, HigherConstructorId};
 use crate::{Error, Result};
 use std::collections::HashMap;
 key!(TermId);
@@ -40,6 +41,13 @@ pub(crate) enum Term {
     Inductive(InductiveId),
     #[allow(dead_code)]
     Constructor(ConstructorId),
+    #[allow(dead_code)] // Constructed through the internal Slice C API, not the parser.
+    HigherApp {
+        constructor: HigherConstructorId,
+        parameters: Vec<TermId>,
+        arguments: Vec<TermId>,
+        dimensions: Vec<D>,
+    },
     #[allow(dead_code)]
     Elim {
         inductive: InductiveId,
@@ -108,7 +116,25 @@ pub(crate) struct InductiveDecl {
     pub universe: u32,
     pub parameters: Telescope,
     pub indices: Telescope,
-    pub constructors: Vec<ConstructorId>,
+    pub constructors: FamilyConstructors,
+}
+#[derive(Clone, Debug)]
+pub(crate) enum FamilyConstructors {
+    Ordinary(Vec<ConstructorId>),
+    Higher(Vec<ConstructorRef>),
+}
+impl FamilyConstructors {
+    pub(crate) fn ordinary(&self) -> Result<&[ConstructorId]> {
+        match self {
+            Self::Ordinary(ids) => Ok(ids),
+            Self::Higher(_) => Err(Error::plain(
+                "ordinary operation on Higher family is forbidden",
+            )),
+        }
+    }
+    pub(crate) fn is_higher(&self) -> bool {
+        matches!(self, Self::Higher(_))
+    }
 }
 #[derive(Default, Debug)]
 pub(crate) struct Program {
@@ -118,6 +144,7 @@ pub(crate) struct Program {
     pub inductives: Vec<InductiveDecl>,
     #[allow(dead_code)]
     pub constructors: Vec<ConstructorDecl>,
+    pub higher: Vec<HigherConstructorDecl>,
 }
 
 impl Program {
@@ -125,6 +152,13 @@ impl Program {
     /// This deliberately accepts only direct recursive arguments. Any nested
     /// occurrence (including an occurrence in a function domain) is rejected.
     pub(crate) fn validate_inductives(&self) -> Result<()> {
+        if !self.higher.is_empty()
+            || self.inductives.iter().any(|f| f.constructors.is_higher())
+            || (0..self.terms.len())
+                .any(|i| matches!(self.terms.get(TermId::new(i)).term, Term::HigherApp { .. }))
+        {
+            return crate::hit::validate_executable(self);
+        }
         for (position, family) in self.inductives.iter().enumerate() {
             if family.id.index() != position {
                 return Err(Error::plain("malformed inductive id"));
@@ -148,7 +182,7 @@ impl Program {
                 }
                 bound += 1;
             }
-            for constructor_id in &family.constructors {
+            for constructor_id in family.constructors.ordinary()? {
                 let constructor = self
                     .constructors
                     .get(constructor_id.index())
@@ -168,7 +202,7 @@ impl Program {
                 .inductives
                 .get(constructor.inductive.index())
                 .ok_or_else(|| Error::plain("constructor references a missing inductive"))?;
-            if !family.constructors.contains(&constructor.id) {
+            if !family.constructors.ordinary()?.contains(&constructor.id) {
                 return Err(Error::plain(
                     "constructor is missing from its inductive family",
                 ));
@@ -329,7 +363,7 @@ impl Program {
             universe,
             parameters,
             indices,
-            constructors: vec![],
+            constructors: FamilyConstructors::Ordinary(vec![]),
         });
         id
     }
@@ -352,9 +386,10 @@ impl Program {
             recursive_arguments,
         };
         self.constructors.push(constructor.clone());
-        self.inductives[inductive.index()]
-            .constructors
-            .push(constructor.id);
+        match &mut self.inductives[inductive.index()].constructors {
+            FamilyConstructors::Ordinary(ids) => ids.push(constructor.id),
+            FamilyConstructors::Higher(ids) => ids.push(ConstructorRef::Point(constructor.id)),
+        }
         constructor.id
     }
 }
@@ -743,9 +778,9 @@ mod inductive_metadata_tests {
         assert_eq!(declaration.universe, 0);
         assert!(declaration.parameters.is_empty());
         assert!(declaration.indices.is_empty());
-        assert_eq!(declaration.constructors.len(), 2);
-        let zero = &program.constructors[declaration.constructors[0].index()];
-        let suc = &program.constructors[declaration.constructors[1].index()];
+        assert_eq!(declaration.constructors.ordinary().unwrap().len(), 2);
+        let zero = &program.constructors[declaration.constructors.ordinary().unwrap()[0].index()];
+        let suc = &program.constructors[declaration.constructors.ordinary().unwrap()[1].index()];
         assert_eq!(zero.name, "zero");
         assert_eq!(suc.name, "suc");
         assert_eq!(suc.arguments.len(), 1);
@@ -788,8 +823,8 @@ mod inductive_metadata_tests {
         let declaration = &program.inductives[vec.index()];
         assert_eq!(declaration.parameters.len(), 1);
         assert_eq!(declaration.indices.len(), 1);
-        let nil = &program.constructors[declaration.constructors[0].index()];
-        let cons = &program.constructors[declaration.constructors[1].index()];
+        let nil = &program.constructors[declaration.constructors.ordinary().unwrap()[0].index()];
+        let cons = &program.constructors[declaration.constructors.ordinary().unwrap()[1].index()];
         assert_eq!(nil.result_indices.len(), 1);
         assert_eq!(cons.result_indices.len(), 1);
         assert_eq!(nil.id.index(), 0);
