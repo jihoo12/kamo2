@@ -1,5 +1,5 @@
 use super::*;
-use crate::eval::{Composition, Engine, Val};
+use crate::eval::{Binder, Composition, Engine, Val};
 use crate::face::Dim;
 use crate::syntax::{D, Term, TermId};
 use crate::{CheckedProgram, Options};
@@ -420,6 +420,21 @@ fn circle_composition_e1_reduces_only_boundary_coherent_boxes() {
         let forced = e.force(mixed, top).unwrap();
         assert!(matches!(e.get(forced), Val::Constructor(id) if id == ConstructorId::new(0)));
 
+        // The same boundary reasoning works when the two endpoints arrive as
+        // one disjunctive face; conversion must split the cover locally.
+        let cover = e.faces.or(left, right);
+        let dim = e.fresh_dim();
+        let covered = e.alloc(Val::Com(Composition {
+            dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: base,
+            tubes: vec![(cover, loop_j)],
+        }));
+        let forced = e.force(covered, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Constructor(id) if id == ConstructorId::new(0)));
+
         // Inconsistent tube faces are ignored rather than forcing a spurious
         // constructor agreement.
         let impossible = e.faces.and(left, right);
@@ -456,6 +471,192 @@ fn circle_composition_e1_reduces_only_boundary_coherent_boxes() {
         }));
         let forced = e.force(blocked, top).unwrap();
         assert!(matches!(e.get(forced), Val::Com(_)));
+    }
+}
+
+#[test]
+fn circle_hit_elimination_composes_over_formal_boxes() {
+    for optimized in [false, true] {
+        let p = circle();
+        let mut e = Engine::new(&p, optimized, 200_000, 200_000);
+        let top = e.faces.top();
+        let circle_ty = e.alloc(Val::Inductive(InductiveId::new(0)));
+        let base = e.alloc(Val::Constructor(ConstructorId::new(0)));
+
+        // P x = Path _ Circle x x, a genuinely dependent motive.
+        let x_level = e.fresh_term();
+        let x = e.alloc(Val::Var(x_level, Some(circle_ty)));
+        let motive_dim = e.fresh_dim();
+        let motive_body = e.alloc(Val::Path(
+            Binder {
+                var: motive_dim,
+                body: circle_ty,
+            },
+            x,
+            x,
+        ));
+        let motive = e.alloc(Val::Lam(Binder {
+            var: x_level,
+            body: motive_body,
+        }));
+
+        let base_dim = e.fresh_dim();
+        let base_case = e.alloc(Val::PLam(Binder {
+            var: base_dim,
+            body: base,
+        }));
+
+        let loop_dim = e.fresh_dim();
+        let loop_at_dim = e.alloc(Val::HigherApp {
+            constructor: HigherConstructorId::new(0),
+            parameters: vec![],
+            arguments: vec![],
+            dimensions: vec![Dim::Var(loop_dim)],
+        });
+        let refl_dim = e.fresh_dim();
+        let refl_loop = e.alloc(Val::PLam(Binder {
+            var: refl_dim,
+            body: loop_at_dim,
+        }));
+        let loop_case = e.alloc(Val::PLam(Binder {
+            var: loop_dim,
+            body: refl_loop,
+        }));
+        let methods = vec![base_case, loop_case];
+
+        // This Circle box is well-shaped but intentionally remains formal at
+        // top: its tube starts at base, while at target j it is loop(j), so E1
+        // cannot globally choose the base cap candidate.
+        let j = e.fresh_dim();
+        let k = e.fresh_dim();
+        let comp_dim = e.fresh_dim();
+        let tube = e.alloc(Val::HigherApp {
+            constructor: HigherConstructorId::new(0),
+            parameters: vec![],
+            arguments: vec![],
+            dimensions: vec![Dim::Var(comp_dim)],
+        });
+        let tube_face = e.faces.eq(Dim::Var(k), Dim::Zero);
+        let scrutinee = e.alloc(Val::Com(Composition {
+            dim: comp_dim,
+            family: circle_ty,
+            from: Dim::Zero,
+            to: Dim::Var(j),
+            cap: base,
+            tubes: vec![(tube_face, tube)],
+        }));
+        let forced_scrutinee = e.force(scrutinee, top).unwrap();
+        assert!(matches!(e.get(forced_scrutinee), Val::Com(_)));
+
+        let elim = e.alloc(Val::HitElim {
+            inductive: InductiveId::new(0),
+            parameters: vec![],
+            motive,
+            methods: methods.clone(),
+            indices: vec![],
+            scrutinee,
+        });
+
+        // E2 maps the formal box through the dependent motive. For this motive,
+        // generic Path composition exposes a path whose body is still the
+        // corresponding formal Circle box.
+        let eliminated = e.force(elim, top).unwrap();
+        assert!(matches!(e.get(eliminated), Val::PLam(_)));
+
+        let loop_j = e.alloc(Val::HigherApp {
+            constructor: HigherConstructorId::new(0),
+            parameters: vec![],
+            arguments: vec![],
+            dimensions: vec![Dim::Var(j)],
+        });
+        let expected_dim = e.fresh_dim();
+        let expected_on_tube = e.alloc(Val::Path(
+            Binder {
+                var: expected_dim,
+                body: circle_ty,
+            },
+            loop_j,
+            loop_j,
+        ));
+
+        // Strengthening to the tube face first exposes loop(j). Eliminating
+        // first and then strengthening must compute to the same dependent path.
+        let direct_on_tube = e.force(elim, tube_face).unwrap();
+        let e2_on_tube = e.force(eliminated, tube_face).unwrap();
+        assert!(
+            e.conv(
+                direct_on_tube,
+                e2_on_tube,
+                Some(expected_on_tube),
+                tube_face,
+            )
+            .unwrap()
+        );
+
+        let base_path_dim = e.fresh_dim();
+        let expected_at_base = e.alloc(Val::Path(
+            Binder {
+                var: base_path_dim,
+                body: circle_ty,
+            },
+            base,
+            base,
+        ));
+
+        // Endpoint substitutions and the diagonal j := k can activate E1 after
+        // E2 has already built the motive composition. Both reduction orders
+        // must agree with eliminating the restricted Circle box directly.
+        for target in [Dim::Zero, Dim::One, Dim::Var(k)] {
+            let direct = e.restrict(elim, j, target);
+            let direct = e.force(direct, top).unwrap();
+            let after_e2 = e.restrict(eliminated, j, target);
+            let after_e2 = e.force(after_e2, top).unwrap();
+            assert!(
+                e.conv(direct, after_e2, Some(expected_at_base), top)
+                    .unwrap()
+            );
+        }
+    }
+}
+
+#[test]
+fn circle_e_rules_do_not_open_parameterized_or_indexed_hits() {
+    for optimized in [false, true] {
+        let p = indexed();
+        let mut e = Engine::new(&p, optimized, 100_000, 100_000);
+        let top = e.faces.top();
+        let bool_ty = e.alloc(Val::Bool);
+        let true_value = e.alloc(Val::True);
+        let family_head = e.alloc(Val::Inductive(InductiveId::new(0)));
+        let family = e.app(family_head, bool_ty);
+        let family = e.app(family, true_value);
+        let base_head = e.alloc(Val::Constructor(ConstructorId::new(0)));
+        let base = e.app(base_head, bool_ty);
+        let base = e.app(base, true_value);
+        let dim = e.fresh_dim();
+        let scrutinee = e.alloc(Val::Com(Composition {
+            dim,
+            family,
+            from: Dim::Zero,
+            to: Dim::One,
+            cap: base,
+            tubes: vec![],
+        }));
+        let forced = e.force(scrutinee, top).unwrap();
+        assert!(matches!(e.get(forced), Val::Com(_)));
+
+        let motive_var = e.fresh_term();
+        let motive = e.alloc(Val::Var(motive_var, None));
+        let elim = e.alloc(Val::HitElim {
+            inductive: InductiveId::new(0),
+            parameters: vec![bool_ty],
+            motive,
+            methods: vec![],
+            indices: vec![true_value],
+            scrutinee,
+        });
+        let forced = e.force(elim, top).unwrap();
+        assert!(matches!(e.get(forced), Val::HitElim { .. }));
     }
 }
 
@@ -952,12 +1153,18 @@ fn structured_quotation_preserves_glue_typed_higher_arguments() {
 
 #[test]
 fn structured_quotation_preserves_blocked_higher_composition() {
-    let mut p = circle();
-    let c = p.alloc(Term::Inductive(InductiveId::new(0)), 0);
+    let mut p = indexed();
+    let bool_ty = p.alloc(Term::Bool, 0);
+    let true_value = p.alloc(Term::True, 0);
+    let family = p.alloc(Term::Inductive(InductiveId::new(0)), 0);
+    let family = p.alloc(Term::App(family, bool_ty), 0);
+    let family = p.alloc(Term::App(family, true_value), 0);
     let base = p.alloc(Term::Constructor(ConstructorId::new(0)), 0);
+    let base = p.alloc(Term::App(base, bool_ty), 0);
+    let base = p.alloc(Term::App(base, true_value), 0);
     let body = p.alloc(
         Term::Com {
-            family: c,
+            family,
             from: D::Zero,
             to: D::One,
             cap: base,
@@ -965,7 +1172,7 @@ fn structured_quotation_preserves_blocked_higher_composition() {
         },
         0,
     );
-    p.push_decl("blocked".into(), c, body);
+    p.push_decl("blocked".into(), family, body);
     recheck_quotation(p, true);
 }
 

@@ -1,4 +1,4 @@
-//! Slice C publication/runtime helpers plus Slice D HIT elimination support. No HIT Kan rule.
+//! Slice C runtime, Slice D HIT elimination, and scoped Slice E Circle composition support.
 #[cfg(test)]
 #[path = "hit_runtime_tests.rs"]
 mod tests;

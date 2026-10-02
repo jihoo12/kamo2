@@ -1128,10 +1128,10 @@ impl<'a> Engine<'a> {
                 }
                 Val::HitElim {
                     inductive,
-                    parameters: _,
-                    motive: _,
+                    parameters,
+                    motive,
                     methods,
-                    indices: _,
+                    indices,
                     scrutinee,
                 } => {
                     let family = self
@@ -1143,6 +1143,12 @@ impl<'a> Engine<'a> {
                     let members = family.constructors.higher()?.to_vec();
                     let scrutinee = self.force(scrutinee, face)?;
                     match self.get(scrutinee) {
+                        Val::Com(composition) => self.eliminate_circle_composition(
+                            composition,
+                            face,
+                            inductive,
+                            (parameters, motive, methods, indices),
+                        )?,
                         Val::HigherApp {
                             constructor,
                             arguments,
@@ -1645,25 +1651,14 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Conservative Slice E1 rule for the unparameterized Circle fragment.
-    /// We only reduce a box when the family is exactly the published one-point,
-    /// one-path Circle shape and every active tube agrees at the target with
-    /// the candidate cap value. Otherwise composition remains formal/blocked.
-    fn compose_circle_hit(
-        &mut self,
-        c: Composition,
-        face: FaceId,
+    fn circle_hit_members(
+        &self,
         inductive: InductiveId,
-        family_arguments: Vec<ValId>,
-    ) -> Result<Option<ValId>> {
+    ) -> Result<Option<(ConstructorId, HigherConstructorId)>> {
         let family = self.program.inductives[inductive.index()].clone();
-        if !family.parameters.is_empty()
-            || !family.indices.is_empty()
-            || !family_arguments.is_empty()
-        {
+        if !family.parameters.is_empty() || !family.indices.is_empty() {
             return Ok(None);
         }
-
         let members = family.constructors.higher()?;
         let [
             ConstructorRef::Point(base_id),
@@ -1685,18 +1680,108 @@ impl<'a> Engine<'a> {
         {
             return Ok(None);
         }
+        Ok(Some((*base_id, *loop_id)))
+    }
 
-        for endpoint in [c.from, c.to] {
-            let endpoint_family = self.restrict(c.family, c.dim, endpoint);
-            let Some((endpoint_id, endpoint_arguments)) =
-                self.inductive_application(endpoint_family, face)?
-            else {
-                return Ok(None);
+    fn composition_is_circle(
+        &mut self,
+        c: &Composition,
+        face: FaceId,
+        inductive: InductiveId,
+    ) -> Result<bool> {
+        for family in [
+            c.family,
+            self.restrict(c.family, c.dim, c.from),
+            self.restrict(c.family, c.dim, c.to),
+        ] {
+            let Some((owner, arguments)) = self.inductive_application(family, face)? else {
+                return Ok(false);
             };
-            if endpoint_id != inductive || !endpoint_arguments.is_empty() {
-                return Ok(None);
+            if owner != inductive || !arguments.is_empty() {
+                return Ok(false);
             }
         }
+        Ok(true)
+    }
+
+    /// Slice E2: dependent elimination of a formal unparameterized Circle
+    /// composition. The motive is composed over the canonical filler from the
+    /// source to a fresh target dimension; cap and tube data are mapped through
+    /// the same HIT eliminator. Unsupported HIT compositions stay neutral.
+    fn eliminate_circle_composition(
+        &mut self,
+        c: Composition,
+        face: FaceId,
+        inductive: InductiveId,
+        eliminator: (Vec<ValId>, ValId, Vec<ValId>, Vec<ValId>),
+    ) -> Result<Option<ValId>> {
+        let (parameters, motive, methods, indices) = eliminator;
+        if !parameters.is_empty()
+            || !indices.is_empty()
+            || self.circle_hit_members(inductive)?.is_none()
+            || !self.composition_is_circle(&c, face, inductive)?
+        {
+            return Ok(None);
+        }
+
+        let y = self.fresh_dim();
+        let target = Dim::Var(y);
+        let filler = self.alloc(Val::Com(Composition {
+            to: target,
+            ..c.clone()
+        }));
+        let family = self.app(motive, filler);
+
+        let cap = self.alloc(Val::HitElim {
+            inductive,
+            parameters: vec![],
+            motive,
+            methods: methods.clone(),
+            indices: vec![],
+            scrutinee: c.cap,
+        });
+
+        let mut tubes = Vec::with_capacity(c.tubes.len());
+        for (tube_face, tube) in &c.tubes {
+            let scrutinee = self.restrict(*tube, c.dim, target);
+            let value = self.alloc(Val::HitElim {
+                inductive,
+                parameters: vec![],
+                motive,
+                methods: methods.clone(),
+                indices: vec![],
+                scrutinee,
+            });
+            tubes.push((*tube_face, value));
+        }
+
+        Ok(Some(self.alloc(Val::Com(Composition {
+            dim: y,
+            family,
+            from: c.from,
+            to: c.to,
+            cap,
+            tubes,
+        }))))
+    }
+
+    /// Conservative Slice E1 rule for the unparameterized Circle fragment.
+    /// We only reduce a box when the family is exactly the published one-point,
+    /// one-path Circle shape and every active tube agrees at the target with
+    /// the candidate cap value. Otherwise composition remains formal/blocked.
+    fn compose_circle_hit(
+        &mut self,
+        c: Composition,
+        face: FaceId,
+        inductive: InductiveId,
+        family_arguments: Vec<ValId>,
+    ) -> Result<Option<ValId>> {
+        if !family_arguments.is_empty() || !self.composition_is_circle(&c, face, inductive)? {
+            return Ok(None);
+        }
+        let Some((base_id, loop_id)) = self.circle_hit_members(inductive)? else {
+            return Ok(None);
+        };
 
         let candidate = self.force(c.cap, face)?;
         match self.get(candidate) {
@@ -1705,13 +1790,13 @@ impl<'a> Engine<'a> {
                 parameters,
                 arguments,
                 dimensions,
-            } if constructor == *loop_id
+            } if constructor == loop_id
                 && parameters.is_empty()
                 && arguments.is_empty()
                 && dimensions.len() == 1 => {}
             _ => {
                 let (head, spine) = self.application_spine_forced(candidate, face)?;
-                if !matches!(self.get(head), Val::Constructor(id) if id == *base_id)
+                if !matches!(self.get(head), Val::Constructor(id) if id == base_id)
                     || !spine.is_empty()
                 {
                     return Ok(None);

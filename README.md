@@ -228,9 +228,10 @@ should reuse Kamo's existing path/composition machinery.
 The [higher-inductive design](docs/higher-inductive-types.md) specifies proposed
 boundary metadata and staged implementation gates. Structurally and semantically
 checked HIT signature staging has an internal, gated one-dimensional core
-fragment for higher applications, boundary reduction, and dependent elimination.
-HIT composition and surface HIT declarations remain unimplemented; Circle is not
-yet a surface language feature.
+fragment for higher applications, boundary reduction, dependent elimination, and
+scoped unparameterized-Circle composition. General parameterized/indexed HIT
+composition and surface HIT declarations remain unimplemented; Circle is not yet
+a surface language feature.
 
 ## Current core syntax
 
@@ -334,13 +335,14 @@ Completed foundations:
 - [x] surface `data` declarations for ordinary and indexed families;
 - [x] non-dependent pattern matching and structural recursion lowering;
 - [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
-- [x] homogeneous cubical surface paths (`==`, `path`, `@`).
+- [x] homogeneous cubical surface paths (`==`, `path`, `@`);
+- [x] gated internal Circle HIT elimination and scoped composition.
 
 Next milestones:
 
 - [ ] broader dependent pattern matching (index equations and nested patterns);
 - [ ] further cubical surface syntax (transport, composition, faces, and Glue);
-- [ ] complete higher inductive types: Circle composition and surface `data Circle`.
+- [ ] surface `data Circle` and higher-constructor elaboration.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate
 propositional equality type, broad global type inference, and premature HIT

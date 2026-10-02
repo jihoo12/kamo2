@@ -1,12 +1,13 @@
 # Higher inductive types: trusted representation and Circle plan
 
-Status: **Slices A/B/C/D implemented**, with an internal one-dimensional,
-nonrecursive higher-application, boundary-reduction, and dependent-elimination
-fragment. HIT composition, mixed Ordinary/Higher signature imports, and surface
-HIT declarations remain unimplemented. Ordinary inductives and homogeneous
-surface paths are implemented; they do not already provide higher constructors.
-The new core fragment changes no mathematical behavior of existing ordinary
-programs.
+Status: **Slices A/B/C/D and the scoped Circle Slice E implemented**, with an
+internal one-dimensional, nonrecursive higher-application, boundary-reduction,
+dependent-elimination, and unparameterized-Circle composition fragment. General
+parameterized/indexed HIT composition, mixed Ordinary/Higher signature imports,
+and surface HIT declarations remain unimplemented. Ordinary inductives and
+homogeneous surface paths are implemented; they do not already provide higher
+constructors. The new core fragment changes no mathematical behavior of existing
+ordinary programs.
 
 ## Existing boundary and required audit obligations
 
@@ -40,12 +41,12 @@ In particular:
 
 The audit requirements are checked boundaries (Slices A/B), eliminator
 coherence (D), a separately justified HIT composition schema (E), and explicit
-acknowledgment that testing is not a mechanized metatheory. A/B and the gated
-one-dimensional nonrecursive D fragment are now implemented; E remains open.
-Nothing here discharges the metatheoretic requirement by analogy to a De Morgan
-cubical implementation. The earlier substitution/face audit also requires
-reduction and conversion to remain stable under simultaneous substitution of
-terms, dimensions, and faces.
+acknowledgment that testing is not a mechanized metatheory. A/B, D, and the
+reviewed unparameterized-Circle E fragment are implemented; a general HIT Kan
+schema remains open. Nothing here discharges the metatheoretic requirement by
+analogy to a De Morgan cubical implementation. The earlier substitution/face
+audit also requires reduction and conversion to remain stable under simultaneous
+substitution of terms, dimensions, and faces.
 
 ## Representation decision
 
@@ -510,7 +511,7 @@ remain future work.
 | Point iota | `circle_elim P b l base --> b` | Reuse point-method application inside the new full-method checker/dispatch |
 | Higher elimination | `circle_elim P b l (HigherApp(L,[],[],[r])) --> l @ r` | New HIT eliminator reduction; path application then uses existing machinery |
 | Constructor boundary | `HigherApp(L,[],[],[0 or 1]) --> base`, also under entailed endpoint faces | New face-sensitive higher-value forcing; existing dimension substitution and entailment are ingredients |
-| HIT composition | A checked composition retains its source and tube restrictions and commutes with higher boundary reduction | Requires a new justified rule; no fieldwise HIT rule specified here |
+| HIT composition | A checked Circle composition retains its source/tube restrictions and commutes with higher boundary reduction | Slice E uses gated E1 boundary-aware reduction plus E2 motive composition; no general fieldwise HIT rule is claimed |
 
 The critical diamond at an endpoint is explicit: higher elimination then path
 endpoint reduction yields `b`; constructor boundary reduction then point iota
@@ -520,13 +521,13 @@ and ambient faces, not only for closed endpoints. Path checking can validate a
 generated method once higher endpoints compute; it cannot create the missing
 higher-constructor or eliminator reductions itself.
 
-## Composition obligations and alternatives (Slice E in progress)
+## Composition obligations and implemented Circle strategy (Slice E)
 
-Do not extend `compose_inductive` to higher heads, or call it for point heads
-whose family has higher constructors. Before E, HIT compositions remain blocked
-apart from the existing generic source-equals-target and entailed-tube rules.
-This is an experimental intermediate calculus, not completed computational HIT
-support or a canonicity claim.
+The ordinary constructor-directed composition rule is still not reused for Higher
+families. Slice E instead adds a separately gated Circle path: unsupported Higher
+families remain blocked apart from the existing generic source-equals-target and
+entailed-tube rules. This is experimental scoped computational HIT support, not a
+general HIT Kan operation or a canonicity claim.
 
 The ordinary “same constructor + compose fields” rule ignores a higher
 constructor's dimension arguments and attaching boundary. `loop(i)` has no term
@@ -570,23 +571,32 @@ composition remains formal `Com`.
 E1 also preserves an interior `loop(j)` cap for a tube-free constant Circle box.
 It does not synthesize or compose interval arguments, use connections, choose an
 endpoint, generalize to parameters/indices/fields, or add a new canonical HIT
-composition value. This is a conservative computation improvement, not the full
-Slice E Kan rule. In particular, dependent elimination of genuinely blocked
-formal HIT compositions still needs an explicit E2 rule before Slice E can be
-called complete.
+composition value.
 
-The broader plausible strategies remain:
+**E2 dependent action** handles a genuinely formal Circle `Com` under `HitElim`.
+For composition dimension `x`, source `r`, target `s`, cap `a`, tubes `u`, and
+motive `P`, it forms a fresh target dimension `y` and the canonical filler
+`fill(y) = Com x Circle r y a u`. The eliminator reduces to a composition in the
+motive family `P(fill(y))`; its cap is elimination of `a`, and each tube is
+elimination of `u` restricted from `x` to `y`. Thus at `y = r` the motive family
+computes to `P(a)`, on an active tube it computes to the motive at that tube, and
+at `y = s` its result has the original eliminator type. Existing `Com` forcing
+then supplies source/tube equations and rechecks newly active higher boundaries.
+No new canonical HIT-composition value is introduced.
 
-- **Formal HIT composition values:** retain a checked `Com`-like canonical
-  operation for HITs, with source/tube/boundary equations and dependent
-  elimination into motive composition. This makes missing constructor shapes
-  explicit but requires quotation, conversion, and a coherent eliminator action
-  over these values; merely keeping today's neutral `Com` is not that proof.
-- **Constructor-specific boundary-aware reduction:** reduce selected uniform
-  boxes using actual argument fillers and boundary corrections, retaining
-  formal/blocked composition otherwise. This can improve computation, but must
-  prove compatibility of those corrections with all attaching faces and indices.
-  No dimension filler using meet, join, or reversal is available by default.
+E2 is gated by the same exact unparameterized Circle shape as E1. Tests compare
+eliminate-then-restrict with restrict-then-eliminate on endpoint substitutions,
+face strengthening, and a diagonal substitution; they also cover disjunctive and
+inconsistent faces. Parameterized/indexed Higher families remain formal and their
+`HitElim` does not acquire this rule.
+
+The implemented scoped strategy therefore combines:
+
+- **Existing formal `Com` values** for boxes not justified by the E1 reduction,
+  together with the E2 dependent motive-composition action.
+- **Constructor-specific boundary-aware E1 reduction** when the target tube
+  restrictions verify the cap candidate. No interval meet, join, or reversal is
+  assumed or synthesized.
 
 E should first address the unparameterized Circle fragment and state its exact
 rule and reduction scope. General argument/index-varying HIT composition is a
@@ -665,8 +675,8 @@ IDs across checking sessions.
 ## Staged implementation plan and acceptance gates
 
 Slices A/B retain staging validation. C adds a gated internal executable fragment,
-and D adds gated dependent elimination for that same one-dimensional
-nonrecursive fragment. Slices E–F remain future work.
+D adds gated dependent elimination, and E adds the scoped unparameterized-Circle
+composition rules described above. Slice F remains future work.
 
 ### HIT Slice A — structurally checked metadata only
 
@@ -723,7 +733,7 @@ the existing face-sensitive cache keys are preserved.
 
 Ordinary composition returns blocked `Com` on Higher families, including a
 point cap. Existing universal source=target and active-tube equations still
-apply; no higher Kan/composition rule is claimed. Ordinary `Elim` is rejected
+apply; Slice C itself claims no higher Kan/composition rule. Ordinary `Elim` is rejected
 by checking, method/motive construction, evaluation and quotation, even on base.
 
 Text quotation retains generic higher payloads using diagnostic
@@ -742,8 +752,9 @@ signatures, two-dimensional publication rejection and runtime resource errors.
 Surface Circle and surface ordinary matching on Higher families remain rejected.
 Run `cargo test hit::runtime --locked` for the focused C tests.
 
-No HIT composition, parser extension, or surface HIT declaration is included.
-This intermediate core is not a complete computational HIT calculus.
+Slice C itself includes no HIT composition, parser extension, or surface HIT
+declaration. Later Slices D/E add the scoped rules described below; the overall
+core is still not a general computational HIT calculus.
 
 ### HIT Slice D — dependent eliminator coherence
 
@@ -754,21 +765,24 @@ iota and higher-method application, while the checker rejects missing or
 ill-typed coherence methods. Regression tests use a genuinely dependent motive,
 exercise both optimized/reference modes, and compare both paths around the
 endpoint computation diamond. The universe policy is the conservative family-
-universe policy described above. HIT composition remains blocked.
+universe policy described above. At the end of D, HIT composition was still
+blocked; the following Slice E adds the separately gated Circle rule.
 
 ### HIT Slice E — Cartesian composition integration
 
-In progress. E1 implements the conservative unparameterized-Circle reduction
-described above: target tube restrictions must convert to the cap candidate, so
-boundary-reduced mixed heads, disjunctive endpoint faces, and inconsistent faces
-are handled without guessing a constructor. Unsupported boxes remain `Com`, and
-all parameterized/indexed/general-HIT families remain blocked.
+Implemented for the reviewed unparameterized Circle fragment. E1 performs the
+conservative boundary-aware reduction described above: target tube restrictions
+must convert to the cap candidate, so boundary-reduced mixed heads, disjunctive
+endpoint faces, and inconsistent faces are handled without guessing a
+constructor. E2 gives `HitElim` a dependent action on genuinely formal Circle
+compositions by composing in `P(fill(y))` with eliminated cap/tubes.
 
-Before E is complete, specify and implement the dependent action of `HitElim` on
-genuinely formal HIT compositions, add stronger substitution/diagonal and
-reduction-order tests around that rule, and record the remaining metatheoretic
-gap. Do not enable more general metadata fragments by accident when only
-Circle's reviewed fragment is implemented.
+Regression tests exercise both evaluator modes, face strengthening, endpoint and
+diagonal substitutions, disjunctive covers, inconsistent faces, formal boxes and
+both reduction orders. The rule is deliberately not enabled for parameterized,
+indexed, multi-constructor, or multidimensional HITs. Agreement of the two
+engines remains regression evidence rather than a mechanized metatheory; general
+HIT Kan structure remains future work beyond the Circle milestone.
 
 ### HIT Slice F — surface `data Circle`
 
