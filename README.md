@@ -225,6 +225,10 @@ A path constructor such as `loop` cannot be treated as an ordinary point
 constructor. Its elimination rule needs boundary/coherence information and
 should reuse Kamo's existing path/composition machinery.
 
+The [higher-inductive design](docs/higher-inductive-types.md) specifies proposed
+boundary metadata and staged implementation gates. HIT metadata and semantics
+remain unimplemented.
+
 ## Current core syntax
 
 Definitions currently use:

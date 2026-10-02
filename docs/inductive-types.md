@@ -178,3 +178,7 @@ The major remaining design areas are:
 Higher inductive types should extend the checked declaration representation with
 boundary-aware constructor information rather than pretending path constructors
 are ordinary point constructors.
+
+See [higher-inductive-types.md](higher-inductive-types.md) for the proposed
+representation and Circle implementation slices. That design adds no implemented
+HIT behavior to the ordinary fragment described here.
