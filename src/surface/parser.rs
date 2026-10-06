@@ -378,7 +378,15 @@ impl Parser {
                 && name.chars().all(|c| c.is_alphanumeric() || c == '_')
                 && !matches!(
                     name.as_str(),
-                    "path" | "def" | "let" | "match" | "data" | "where" | "module" | "import"
+                    "path"
+                        | "coe"
+                        | "def"
+                        | "let"
+                        | "match"
+                        | "data"
+                        | "where"
+                        | "module"
+                        | "import"
                 ) =>
             {
                 Ok(Dimension::Name(name))
@@ -422,6 +430,29 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("coe") {
+            self.index += 1;
+            self.expect(TokenKind::LParen, "expected '(i => family)' after coe")?;
+            let Dimension::Name(dimension) = self.dimension()? else {
+                return Err(Error::at(
+                    self.offset(),
+                    "coe binder must be a dimension name",
+                ));
+            };
+            self.expect(TokenKind::FatArrow, "expected '=>' after coe dimension")?;
+            let family = self.expr()?;
+            self.expect(TokenKind::RParen, "expected ')' after coe family")?;
+            let from = self.dimension()?;
+            let to = self.dimension()?;
+            let cap = self.postfix()?;
+            return Ok(Expr::Coe {
+                dimension,
+                family: Box::new(family),
+                from,
+                to,
+                cap: Box::new(cap),
+            });
+        }
         if self.eat(&TokenKind::LParen) {
             let save = self.index;
             if let Ok(parameter) = self.name()

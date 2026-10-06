@@ -61,6 +61,14 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// Transport in a dimension-indexed type family. Only `family` binds the dimension.
+    Coe {
+        dimension: String,
+        family: Box<Expr>,
+        from: Dimension,
+        to: Dimension,
+        cap: Box<Expr>,
+    },
     Equality {
         left: Box<Expr>,
         right: Box<Expr>,

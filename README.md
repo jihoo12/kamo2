@@ -20,7 +20,7 @@ or future roadmaps where they go beyond the current implementation.
 > available, including expected-type-directed dependent constructor refinement
 > for ordinary indexed families. Homogeneous path equality (`==`), path
 > abstractions, path application, and the scoped `data Circle` declaration are
-> available. Transport/composition surface syntax and general higher inductive
+> available. Transport (`coe`) has surface syntax. Composition and general higher inductive
 > types remain roadmap work.
 
 ## Direction
@@ -105,7 +105,25 @@ arguments. Dimension names use letters/digits/underscores, starting with a lette
 or underscore; dimensions are separate from term variables and shadow lexically.
 Only `0`, `1`, and bound dimension names are accepted as dimensions.
 
-Readable surface syntax for `coe`, `com`, face systems, and Glue remains future
+Transport uses `coe (i => A) r s value`, where `i` binds a dimension in the
+type family `A` only. The endpoints `r` and `s` are `0`, `1`, or surrounding
+bound dimensions. The value is checked at `A[r/i]`, and the result has type
+`A[s/i]`. Parenthesize compound values, including lambdas and matches:
+
+```text
+def transport (A : Type) (B : Type) (p : A == B) (x : A) : B =
+  coe (i => p @ i) 0 1 x
+```
+
+`coe` is an atomic expression; its value argument includes postfix `@` but
+not unparenthesized function application. For example, use
+`coe (i => A) 0 1 (f x)`. Parenthesize the whole transport before applying
+`@` to its result. The family binder does not scope over endpoints or the
+value. Transport elaborates to existing core composition with no tubes,
+preserving the kernel's computation rules: equal endpoints compute to the
+value, while unknown or varying families may remain neutral.
+
+Readable surface syntax for `com`, face systems, and Glue remains future
 work. There is no surface or core interval meet, join, or reversal.
 
 ## Current implementation
@@ -134,6 +152,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - dependent and non-dependent function types, lambdas, and application;
 - `let` expressions;
 - homogeneous path equality, path abstraction, and dimension application;
+- transport along dimension-indexed type families with `coe`;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - expected-type-directed matches, including dependent constructor refinement
@@ -149,7 +168,7 @@ not accepted.
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
 to the importing module. Nested patterns, general match-result inference,
-transport/composition/Glue surface syntax, and higher inductive types are not implemented.
+composition/Glue surface syntax, and general higher inductive types are not implemented.
 
 ## Universes
 
@@ -292,6 +311,16 @@ scripts/with-limits.sh target/release/kamo normalize examples/nat-add.kamo four
 # (suc (suc (suc (suc zero))))
 ```
 
+A functional surface example demonstrates transport in both directions:
+
+```sh
+scripts/with-limits.sh target/release/kamo check-surface examples/transport-surface.kamo
+scripts/with-limits.sh target/release/kamo normalize-surface examples/transport-surface.kamo forward
+# true
+scripts/with-limits.sh target/release/kamo normalize-surface examples/transport-surface.kamo backward
+# false
+```
+
 The existing examples also exercise univalence, foundational path lemmas,
 categories, functors, and natural transformations.
 
@@ -343,7 +372,8 @@ Completed foundations:
 Next milestones:
 
 - [ ] broader dependent pattern matching (index equations and nested patterns);
-- [ ] further cubical surface syntax (transport, composition, faces, and Glue);
+- [x] cubical transport surface syntax (`coe`);
+- [ ] further cubical surface syntax (composition, faces, and Glue);
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate

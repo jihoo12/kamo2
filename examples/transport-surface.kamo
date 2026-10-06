@@ -1,0 +1,11 @@
+# Transport values along a cubical equality between types.
+def transport (A : Type) (B : Type) (p : A == B) (x : A) : B =
+  coe (i => p @ i) 0 1 x
+
+def transportBack (A : Type) (B : Type) (p : A == B) (x : B) : A =
+  coe (i => p @ i) 1 0 x
+
+def refl (A : Type) : A == A = path i => A
+
+def forward : Bool = transport Bool Bool (refl Bool) true
+def backward : Bool = transportBack Bool Bool (refl Bool) false

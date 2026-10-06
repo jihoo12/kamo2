@@ -582,6 +582,33 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::Coe {
+                dimension,
+                family,
+                from,
+                to,
+                cap,
+            } => {
+                // Endpoints and cap live outside the family binder, even when
+                // an endpoint has the same spelling as that binder.
+                let from_term = self.dimension(from)?;
+                let to_term = self.dimension(to)?;
+                let fresh = self.fresh_name();
+                let mut family = (**family).clone();
+                rename_dimension(&mut family, dimension, &fresh);
+                self.dims.push(fresh.clone());
+                let family_term = self.term(&family);
+                self.dims.pop();
+                let source = instantiate_dimension(&family, &fresh, from);
+                let cap = self.term_expected(cap, Some(&source))?;
+                Term::Com {
+                    family: family_term?,
+                    from: from_term,
+                    to: to_term,
+                    cap,
+                    tubes: vec![],
+                }
+            }
             Expr::Name(name) => {
                 if let Some(index) = self
                     .locals
@@ -991,6 +1018,17 @@ impl Elaborator {
             return self.infer(&Expr::Name(ih));
         }
         match expr {
+            Expr::Coe {
+                dimension,
+                family,
+                from,
+                to,
+                ..
+            } => {
+                self.dimension(from)?;
+                self.dimension(to)?;
+                Ok(instantiate_dimension(family, dimension, to))
+            }
             Expr::Name(name) => self
                 .locals
                 .iter()
@@ -1126,53 +1164,80 @@ fn universe_level(expr: &Expr) -> Result<u32> {
 // Rename only dimension occurrences bound by the surrounding path abstraction;
 // term binders and names inhabit a separate namespace.
 fn rename_dimension(expr: &mut Expr, old: &str, new: &str) {
+    replace_dimension(expr, old, &Dimension::Name(new.to_owned()));
+}
+
+fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
+    let mut result = expr.clone();
+    replace_dimension(&mut result, binder, value);
+    result
+}
+
+fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::Coe {
+            dimension,
+            family,
+            from,
+            to,
+            cap,
+        } => {
+            if dimension != old {
+                replace_dimension(family, old, new);
+            }
+            for endpoint in [from, to] {
+                if matches!(endpoint, Dimension::Name(name) if name == old) {
+                    *endpoint = new.clone();
+                }
+            }
+            replace_dimension(cap, old, new);
+        }
         Expr::PathApply { path, dimension } => {
-            rename_dimension(path, old, new);
+            replace_dimension(path, old, new);
             if matches!(dimension, Dimension::Name(name) if name == old) {
-                *dimension = Dimension::Name(new.to_owned());
+                *dimension = new.clone();
             }
         }
         Expr::PathLambda { dimension, body } => {
             if dimension != old {
-                rename_dimension(body, old, new);
+                replace_dimension(body, old, new);
             }
         }
         Expr::Equality { left, right } => {
-            rename_dimension(left, old, new);
-            rename_dimension(right, old, new);
+            replace_dimension(left, old, new);
+            replace_dimension(right, old, new);
         }
         Expr::Pi {
             domain, codomain, ..
         } => {
-            rename_dimension(domain, old, new);
-            rename_dimension(codomain, old, new);
+            replace_dimension(domain, old, new);
+            replace_dimension(codomain, old, new);
         }
-        Expr::Lambda { body, .. } | Expr::Suc(body) => rename_dimension(body, old, new),
+        Expr::Lambda { body, .. } | Expr::Suc(body) => replace_dimension(body, old, new),
         Expr::Apply { function, argument } => {
-            rename_dimension(function, old, new);
-            rename_dimension(argument, old, new);
+            replace_dimension(function, old, new);
+            replace_dimension(argument, old, new);
         }
         Expr::Let { value, body, .. } => {
-            rename_dimension(value, old, new);
-            rename_dimension(body, old, new);
+            replace_dimension(value, old, new);
+            replace_dimension(body, old, new);
         }
         Expr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            rename_dimension(condition, old, new);
-            rename_dimension(then_branch, old, new);
-            rename_dimension(else_branch, old, new);
+            replace_dimension(condition, old, new);
+            replace_dimension(then_branch, old, new);
+            replace_dimension(else_branch, old, new);
         }
         Expr::Match {
             scrutinee,
             branches,
         } => {
-            rename_dimension(scrutinee, old, new);
+            replace_dimension(scrutinee, old, new);
             for branch in branches {
-                rename_dimension(&mut branch.body, old, new);
+                replace_dimension(&mut branch.body, old, new);
             }
         }
         Expr::Name(_)
@@ -1187,6 +1252,19 @@ fn rename_dimension(expr: &mut Expr, old: &str, new: &str) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::Coe {
+            dimension,
+            family,
+            from,
+            to,
+            cap,
+        } => Expr::Coe {
+            dimension: dimension.clone(),
+            family: Box::new(substitute(family, name, replacement)),
+            from: from.clone(),
+            to: to.clone(),
+            cap: Box::new(substitute(cap, name, replacement)),
+        },
         Expr::Name(current) if current == name => replacement.clone(),
         Expr::Equality { left, right } => Expr::Equality {
             left: Box::new(substitute(left, name, replacement)),

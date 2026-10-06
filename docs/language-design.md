@@ -23,6 +23,8 @@ The current system already has:
   ordinary-inductive fragment;
 - homogeneous surface path equality (`==`), path abstraction (`path`), and
   dimension application (`@`), elaborated to existing core paths;
+- surface transport `coe (i => A) r s value`, lowered to existing core
+  composition with no tubes and checked at the source and destination types;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -129,8 +131,17 @@ right-associative `->`. For example, `f x == g y` compares two applications;
 `f p @ i` means `f (p @ i)`. Use `(f x) @ i` to apply a dimension to a function
 result. Chained equalities require parentheses.
 
+Transport is written `coe (i => A) r s value`. The dimension binds only the
+family `A`, not `r`, `s`, or `value`. The elaborator supplies `A[r/i]` as the
+expected type of the value (including lambdas and matches), and synthesizes
+`A[s/i]` for the result. Lowering uses the existing `Com` term with no tubes;
+source/destination typing and computation remain the kernel's responsibility.
+In particular, neutral type lines are not treated as constant just because
+their endpoints agree. See `examples/transport-surface.kamo` for a runnable
+example and the README for argument precedence.
+
 General path-abstraction inference, explicit dimension-dependent path families,
-and readable surface syntax for `coe`, `com`, face formulas/systems, and Glue
+and readable surface syntax for `com`, face formulas/systems, and Glue
 remain future work. Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
