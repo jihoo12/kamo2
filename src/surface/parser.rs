@@ -1,5 +1,5 @@
 use super::ast::{
-    ConstructorDeclaration, DataDeclaration, Declaration, Dimension, Expr, Item, MatchBranch,
+    ConstructorDeclaration, DataDeclaration, Declaration, Dimension, Expr, Face, Item, MatchBranch,
     Pattern, Program,
 };
 use crate::{Error, Result};
@@ -14,6 +14,8 @@ enum TokenKind {
     Colon,
     Eq,
     EqualEqual,
+    AndAnd,
+    OrOr,
     At,
     Arrow,
     FatArrow,
@@ -54,13 +56,16 @@ fn lex(source: &str) -> Result<Vec<Token>> {
             b'-' if bytes.get(i + 1) == Some(&b'>') => (TokenKind::Arrow, 2),
             b'=' if bytes.get(i + 1) == Some(&b'>') => (TokenKind::FatArrow, 2),
             b'=' if bytes.get(i + 1) == Some(&b'=') => (TokenKind::EqualEqual, 2),
+            b'&' if bytes.get(i + 1) == Some(&b'&') => (TokenKind::AndAnd, 2),
+            b'|' if bytes.get(i + 1) == Some(&b'|') => (TokenKind::OrOr, 2),
+            b'&' | b'|' => return Err(Error::at(offset, "expected '&&' or '||'")),
             b'@' => (TokenKind::At, 1),
             b'=' => (TokenKind::Eq, 1),
             _ => {
                 let start = i;
                 while !(i >= bytes.len()
                     || bytes[i].is_ascii_whitespace()
-                    || b"(){}:=@\\;".contains(&bytes[i])
+                    || b"(){}:=@&|\\;".contains(&bytes[i])
                     || bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
                 {
                     i += 1;
@@ -380,6 +385,7 @@ impl Parser {
                     name.as_str(),
                     "path"
                         | "coe"
+                        | "com"
                         | "PathP"
                         | "def"
                         | "let"
@@ -430,7 +436,76 @@ impl Parser {
         }
     }
 
+    fn face(&mut self) -> Result<Face> {
+        let mut face = self.face_and()?;
+        while self.eat(&TokenKind::OrOr) {
+            face = Face::Or(Box::new(face), Box::new(self.face_and()?));
+        }
+        Ok(face)
+    }
+
+    fn face_and(&mut self) -> Result<Face> {
+        let mut face = self.face_atom()?;
+        while self.eat(&TokenKind::AndAnd) {
+            face = Face::And(Box::new(face), Box::new(self.face_atom()?));
+        }
+        Ok(face)
+    }
+
+    fn face_atom(&mut self) -> Result<Face> {
+        if self.eat(&TokenKind::LParen) {
+            let face = self.face()?;
+            self.expect(TokenKind::RParen, "expected ')' after face")?;
+            return Ok(face);
+        }
+        for (name, face) in [("top", Face::Top), ("bottom", Face::Bottom)] {
+            if self.peek_name(name) {
+                self.index += 1;
+                return Ok(face);
+            }
+        }
+        let left = self.dimension()?;
+        self.expect(TokenKind::Eq, "expected '=' in face equality")?;
+        Ok(Face::Equal(left, self.dimension()?))
+    }
+
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("com") {
+            self.index += 1;
+            self.expect(TokenKind::LParen, "expected '(i => family)' after com")?;
+            let Dimension::Name(dimension) = self.dimension()? else {
+                return Err(Error::at(
+                    self.offset(),
+                    "com binder must be a dimension name",
+                ));
+            };
+            self.expect(TokenKind::FatArrow, "expected '=>' after com dimension")?;
+            let family = self.expr()?;
+            self.expect(TokenKind::RParen, "expected ')' after com family")?;
+            let from = self.dimension()?;
+            let to = self.dimension()?;
+            let cap = self.postfix()?;
+            self.expect(TokenKind::LBrace, "expected '{' before composition tubes")?;
+            let mut tubes = Vec::new();
+            while !self.eat(&TokenKind::RBrace) {
+                let face = self.face()?;
+                self.expect(TokenKind::FatArrow, "expected '=>' after tube face")?;
+                tubes.push((face, self.expr()?));
+                if self.eat(&TokenKind::RBrace) {
+                    break;
+                }
+                self.expect(TokenKind::Semicolon, "expected ';' between tubes")?;
+            }
+            return Ok(Expr::Com {
+                dimension,
+                family: Box::new(family),
+                from,
+                to,
+                cap: Box::new(cap),
+                tubes,
+            });
+        }
+
         if self.peek_name("PathP") {
             self.index += 1;
             self.expect(TokenKind::LParen, "expected '(i => family)' after PathP")?;

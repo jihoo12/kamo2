@@ -27,6 +27,8 @@ The current system already has:
   composition with no tubes and checked at the source and destination types;
 - explicit dependent paths `PathP (i => A) left right`, with endpoint-directed
   checking, type-family instantiation for `@`, and existing core `Path` lowering;
+- surface composition with scoped tubes and Cartesian face equalities,
+  conjunction, and disjunction, checked by the existing core;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -152,8 +154,19 @@ inside inductive constructor argument types. See
 `examples/dependent-paths-surface.kamo` for paths built from transport and a
 varying family of identity functions.
 
-General path-abstraction inference and readable surface syntax for `com`, face formulas/systems, and Glue
-remain future work. Only endpoints and bound names are dimensions: there is no
+Composition uses `com (i => A) r s cap { face => tube; ... }`. Its binder
+scopes over the family and tube bodies only. Faces use `top`, `bottom`,
+dimension equality `=`, conjunction `&&`, disjunction `||`, and parentheses,
+with equality tighter than conjunction and conjunction tighter than disjunction.
+The elaborator resolves faces before entering the composition scope and provides
+the family as the expected type of tube bodies. It lowers directly to `Com`;
+the kernel retains responsibility for source compatibility and overlap coherence.
+No coverage requirement is added for composition tubes. The Cartesian path
+concatenation and inverse examples in `examples/composition-surface.kamo` require
+neither interval connections nor reversal.
+
+General path-abstraction inference and readable surface syntax for standalone
+systems and Glue remain future work. Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
 work.

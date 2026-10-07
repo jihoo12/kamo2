@@ -1,0 +1,17 @@
+# Cartesian cubical path concatenation, without interval reversal/connections.
+def concat (A : Type) (x : A) (y : A) (z : A)
+  (p : x == y) (q : y == z) : x == z =
+  path i => com (j => A) 0 1 (p @ i) {
+    i = 0 => x;
+    i = 1 => q @ j
+  }
+
+def inverse (A : Type) (x : A) (y : A) (p : x == y) : y == x =
+  path i => com (j => A) 0 1 x {
+    i = 0 => p @ j;
+    i = 1 => x
+  }
+
+def refl : true == true = path i => true
+def left : Bool = (concat Bool true true true refl refl) @ 0
+def right : Bool = (concat Bool true true true refl refl) @ 1

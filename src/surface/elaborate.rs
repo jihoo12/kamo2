@@ -1,5 +1,5 @@
 use super::ast::{
-    DataDeclaration, Declaration, Dimension, Expr, Item, Pattern, Program as SurfaceProgram,
+    DataDeclaration, Declaration, Dimension, Expr, Face, Item, Pattern, Program as SurfaceProgram,
 };
 use crate::arena::Key;
 use crate::hit::{
@@ -580,8 +580,63 @@ impl Elaborator {
         self.term_expected(expr, None)
     }
 
+    fn face(&self, face: &Face) -> Result<F> {
+        Ok(match face {
+            Face::Top => F::Top,
+            Face::Bottom => F::Bot,
+            Face::Equal(a, b) => F::Eq(self.dimension(a)?, self.dimension(b)?),
+            Face::And(a, b) => F::And(Box::new(self.face(a)?), Box::new(self.face(b)?)),
+            Face::Or(a, b) => F::Or(Box::new(self.face(a)?), Box::new(self.face(b)?)),
+        })
+    }
+
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::Com {
+                dimension,
+                family,
+                from,
+                to,
+                cap,
+                tubes,
+            } => {
+                let from_term = self.dimension(from)?;
+                let to_term = self.dimension(to)?;
+                // Faces, endpoints and cap are outside the composition binder.
+                let faces = tubes
+                    .iter()
+                    .map(|(face, _)| self.face(face))
+                    .collect::<Result<Vec<_>>>()?;
+                let fresh = self.fresh_name();
+                let mut family = (**family).clone();
+                rename_dimension(&mut family, dimension, &fresh);
+                let source = instantiate_dimension(&family, &fresh, from);
+                let cap = self.term_expected(cap, Some(&source))?;
+                self.dims.push(fresh.clone());
+                let lowered = (|| {
+                    let family_term = self.term(&family)?;
+                    let tubes = tubes
+                        .iter()
+                        .zip(faces)
+                        .map(|((_, body), face)| {
+                            let mut body = body.clone();
+                            rename_dimension(&mut body, dimension, &fresh);
+                            Ok((face, self.term_expected(&body, Some(&family))?))
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok::<_, Error>((family_term, tubes))
+                })();
+                self.dims.pop();
+                let (family, tubes) = lowered?;
+                Term::Com {
+                    family,
+                    from: from_term,
+                    to: to_term,
+                    cap,
+                    tubes,
+                }
+            }
+
             Expr::PathP {
                 dimension,
                 family,
@@ -1067,6 +1122,13 @@ impl Elaborator {
                 from,
                 to,
                 ..
+            }
+            | Expr::Com {
+                dimension,
+                family,
+                from,
+                to,
+                ..
             } => {
                 self.dimension(from)?;
                 self.dimension(to)?;
@@ -1221,6 +1283,29 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::Com {
+            dimension,
+            family,
+            from,
+            to,
+            cap,
+            tubes,
+        } => {
+            if dimension != old {
+                replace_dimension(family, old, new);
+            }
+            for endpoint in [from, to] {
+                replace_dim(endpoint, old, new);
+            }
+            replace_dimension(cap, old, new);
+            for (face, body) in tubes {
+                replace_face(face, old, new);
+                if dimension != old {
+                    replace_dimension(body, old, new);
+                }
+            }
+        }
+
         Expr::PathP {
             dimension,
             family,
@@ -1310,6 +1395,25 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::Com {
+            dimension,
+            family,
+            from,
+            to,
+            cap,
+            tubes,
+        } => Expr::Com {
+            dimension: dimension.clone(),
+            family: Box::new(substitute(family, name, replacement)),
+            from: from.clone(),
+            to: to.clone(),
+            cap: Box::new(substitute(cap, name, replacement)),
+            tubes: tubes
+                .iter()
+                .map(|(face, body)| (face.clone(), substitute(body, name, replacement)))
+                .collect(),
+        },
+
         Expr::PathP {
             dimension,
             family,
@@ -1417,6 +1521,26 @@ fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
         },
         Expr::Suc(value) => Expr::Suc(Box::new(substitute(value, name, replacement))),
         _ => expr.clone(),
+    }
+}
+
+fn replace_dim(dimension: &mut Dimension, old: &str, new: &Dimension) {
+    if matches!(dimension, Dimension::Name(name) if name == old) {
+        *dimension = new.clone();
+    }
+}
+
+fn replace_face(face: &mut Face, old: &str, new: &Dimension) {
+    match face {
+        Face::Equal(a, b) => {
+            replace_dim(a, old, new);
+            replace_dim(b, old, new);
+        }
+        Face::And(a, b) | Face::Or(a, b) => {
+            replace_face(a, old, new);
+            replace_face(b, old, new);
+        }
+        Face::Top | Face::Bottom => {}
     }
 }
 

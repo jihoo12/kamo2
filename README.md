@@ -20,8 +20,8 @@ or future roadmaps where they go beyond the current implementation.
 > available, including expected-type-directed dependent constructor refinement
 > for ordinary indexed families. Homogeneous path equality (`==`), path
 > abstractions, path application, and the scoped `data Circle` declaration are
-> available. Transport (`coe`) has surface syntax. Composition and general higher inductive
-> types remain roadmap work.
+> available. Transport (`coe`) and composition (`com`) have surface syntax. General higher
+> inductive types remain roadmap work.
 
 ## Direction
 
@@ -141,8 +141,35 @@ value. Transport elaborates to existing core composition with no tubes,
 preserving the kernel's computation rules: equal endpoints compute to the
 value, while unknown or varying families may remain neutral.
 
-Readable surface syntax for `com`, face systems, and Glue remains future
-work. There is no surface or core interval meet, join, or reversal.
+Composition uses `com (i => A) r s cap { face => tube; ... }`. The dimension
+`i` binds the family and tube bodies, but not the endpoints, cap, or faces.
+The cap is checked at `A[r/i]`, tubes at `A`, and the result has type `A[s/i]`.
+The kernel checks that each tube agrees with the cap at `r` under its face,
+and that tube bodies agree wherever their faces overlap. Faces need not cover
+the whole context; empty tubes give the same operation as `coe`.
+
+Faces are `top`, `bottom`, or dimension equalities such as `i = 0` and `i = j`,
+combined with `&&`, `||`, and parentheses. Equality binds tighter than `&&`,
+which binds tighter than `||`. These operators combine cofibrations; they
+are not operations on interval values. There is no surface or core interval
+meet, join, or reversal.
+
+```text
+def concat (A : Type) (x : A) (y : A) (z : A)
+  (p : x == y) (q : y == z) : x == z =
+  path i => com (j => A) 0 1 (p @ i) {
+    i = 0 => x;
+    i = 1 => q @ j
+  }
+```
+
+`com` is atomic. Parenthesize compound caps; its cap includes postfix `@`
+but not unparenthesized application. Tube bodies accept full expressions;
+separate tubes with semicolons (a trailing semicolon is accepted). The face
+is resolved in the surrounding dimension scope even if the composition binder
+has the same spelling. See `examples/composition-surface.kamo` for path
+concatenation and inversion. Standalone face systems and Glue syntax remain
+future work.
 
 ## Current implementation
 
@@ -172,6 +199,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - homogeneous path equality, path abstraction, and dimension application;
 - explicit dependent path types with `PathP`;
 - transport along dimension-indexed type families with `coe`;
+- heterogeneous composition with `com` and Cartesian face conditions;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - expected-type-directed matches, including dependent constructor refinement
@@ -187,7 +215,7 @@ not accepted.
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
 to the importing module. Nested patterns, general match-result inference,
-composition/Glue surface syntax, and general higher inductive types are not implemented.
+standalone system/Glue surface syntax, and general higher inductive types are not implemented.
 
 ## Universes
 
@@ -393,7 +421,8 @@ Next milestones:
 - [ ] broader dependent pattern matching (index equations and nested patterns);
 - [x] cubical transport surface syntax (`coe`);
 - [x] explicit dependent path surface syntax (`PathP`);
-- [ ] further cubical surface syntax (composition, faces, and Glue);
+- [x] cubical composition and face conditions (`com`, `=`, `&&`, `||`);
+- [ ] further cubical surface syntax (standalone systems and Glue);
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate

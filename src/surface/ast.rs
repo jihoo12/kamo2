@@ -61,6 +61,15 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// The dimension binds the family and tube bodies, but not faces or cap.
+    Com {
+        dimension: String,
+        family: Box<Expr>,
+        from: Dimension,
+        to: Dimension,
+        cap: Box<Expr>,
+        tubes: Vec<(Face, Expr)>,
+    },
     /// A dependent path; the dimension binds only the family.
     PathP {
         dimension: String,
@@ -123,4 +132,13 @@ pub enum Expr {
         scrutinee: Box<Expr>,
         branches: Vec<MatchBranch>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Face {
+    Top,
+    Bottom,
+    Equal(Dimension, Dimension),
+    And(Box<Face>, Box<Face>),
+    Or(Box<Face>, Box<Face>),
 }
