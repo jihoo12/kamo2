@@ -34,6 +34,7 @@ The current system already has:
 - surface Glue types, introduction, and projection with existing kernel checks;
 - explicit elimination motives and full constructor-application type synthesis;
 - exhaustive disjoint nested constructor patterns lowered to flat eliminations;
+- result type synthesis for explicit-motive matches in unannotated contexts;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -113,8 +114,8 @@ is an existing checked generic eliminator, with no new kernel matching rule.
 Automatic synthesis does not implement full dependent pattern matching. Compound or repeated
 indices remain fixed; there is no index-equation solving, impossible-branch
 pruning, or generalization of other dependent local hypotheses. Exhaustive
-patterns and an expected result type are still required. General match-result
-inference remains future work.
+patterns and an expected result type are required for automatic motives.
+Branch-based inference without an explicit motive remains future work.
 
 Explicit motives use `match value return (indices..., scrutinee => resultType)`
 before the branch block. Index binders are ordered as in the family's metadata,
@@ -123,12 +124,20 @@ have metadata-derived dependent types, and scope only over the result type.
 The motive is lowered to the same kernel eliminator as automatic matches;
 constructor branches and recursive hypotheses instantiate it at their own
 indices and values. Compound and repeated indices and non-variable scrutinees
-can be generalized explicitly. Expected result types and exhaustive
-patterns are still required; equation solving, impossible-branch pruning, and
-unannotated match-result inference remain deferred. Constructor applications
+can be generalized explicitly. Exhaustive patterns are still required; equation
+solving and impossible-branch pruning remain deferred. Constructor applications
 now synthesize their full dependent types from checked metadata, enabling
 inference for let-bound constructors and expression scrutinees.
 See `examples/match-motives-surface.kamo`.
+
+Explicit-motive matches synthesize a type by reifying their motive at the actual
+indices and matched value. The reification environment carries metadata-derived
+types for index expressions and the known scrutinee type. Inner term and dimension
+binders are freshened by core decoding before arguments are inserted, avoiding
+capture in dependent function, pair, and path types. This supplies types for
+unannotated lets, function positions, and projections while retaining the same
+kernel branch and eliminator checks. Branch-based inference without a motive is
+not implemented. See `examples/inferred-match-surface.kamo`.
 
 Nested constructor arguments use parentheses: `suc (zero)` and `suc (suc k)`.
 The elaborator groups outer constructors, chooses inspected argument columns,

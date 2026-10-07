@@ -292,8 +292,8 @@ not accepted.
 
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
-to the importing module. General match-result inference and general higher
-inductive types are not implemented.
+to the importing module. Match-result inference without an explicit motive and
+general higher inductive types are not implemented.
 
 ## Universes
 
@@ -376,7 +376,28 @@ induction hypotheses at the recursive child's indices. The kernel checks that
 the eliminator's result at the actual input matches the enclosing expected
 type. All constructors still require branches: this does not solve index
 equations or prune impossible cases. Exhaustive constructor patterns and an
-expected result type remain required; unannotated match inference is deferred.
+expected result type remain required for automatic motive synthesis. Explicit
+motives also support result type inference, as described below.
+
+When `return` is present, the match can synthesize its result type by applying
+the motive to the actual indices and scrutinee. This enables unannotated let
+bindings, function application, projections, and path application:
+
+```text
+def proof (n : Nat) : n == n =
+  let p = match n return (value => value == value) {
+    zero => path i => zero;
+    suc k => path i => suc k
+  }; p
+```
+
+Motive instantiation uses a typed reification environment and fresh internal
+binders, preserving dependent index types, expression scrutinees, and outer
+dimensions without capturing variables in Pi, Sigma, or path binders. Every
+branch and the resulting eliminator are still checked by the kernel. Nested
+patterns and existing flat structural recursion remain supported. Match without
+an explicit `return` still needs an expected result type; arbitrary branch-based
+type inference is not added. See `examples/inferred-match-surface.kamo`.
 
 Constructor applications now synthesize their full dependent function/result
 types from metadata, supporting typed inference for `let xs = cons ...` and
@@ -549,6 +570,7 @@ Completed foundations:
 - [x] non-dependent pattern matching and structural recursion lowering;
 - [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
 - [x] explicit match motives for compound/repeated indices and expression scrutinees;
+- [x] result type inference for matches with explicit motives;
 - [x] homogeneous cubical surface paths (`==`, `path`, `@`);
 - [x] gated Circle HIT elimination and scoped composition;
 - [x] scoped surface `data Circle` and higher path-constructor elaboration.

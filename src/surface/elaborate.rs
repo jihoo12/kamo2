@@ -516,6 +516,70 @@ impl Elaborator {
         })
     }
 
+    // Reify the motive at the actual indices/value through a typed environment.
+    // Core decoding freshens inner binders before inserting possibly open arguments.
+    fn explicit_match_type(
+        &mut self,
+        scrutinee: &Expr,
+        binders: &[String],
+        result: &Expr,
+    ) -> Result<Expr> {
+        let scrutinee_ty = self.infer(scrutinee)?;
+        let (family, parameters, indices) = self.inductive_application(&scrutinee_ty)?;
+        let declaration = self.core.inductives[family.index()].clone();
+        declaration.constructors.ordinary()?;
+        if binders.len() != indices.len() + 1 {
+            return Err(Error::plain(format!(
+                "match motive expects {} binders (indices followed by scrutinee), found {}",
+                indices.len() + 1,
+                binders.len()
+            )));
+        }
+        let mut seen = HashSet::new();
+        let mut renamed = result.clone();
+        let mut names = Vec::new();
+        for binder in binders {
+            if !seen.insert(binder) {
+                return Err(Error::plain("duplicate match motive binder"));
+            }
+            let fresh = self.fresh_name();
+            renamed = substitute(&renamed, binder, &Expr::Name(fresh.clone()));
+            names.push(fresh);
+        }
+        let saved = self.locals.len();
+        let inferred = (|| {
+            let mut abstract_telescope = parameters.clone();
+            let mut actual_telescope = parameters;
+            let mut actual_env = self
+                .locals
+                .iter()
+                .map(|(name, _)| Expr::Name(name.clone()))
+                .collect::<Vec<_>>();
+            for ((entry, name), actual) in declaration.indices.iter().zip(&names).zip(&indices) {
+                let abstract_ty = self.surface_expr_in(entry.ty, &abstract_telescope)?;
+                let actual_ty = self.surface_expr_in(entry.ty, &actual_telescope)?;
+                self.locals.push((name.clone(), abstract_ty));
+                abstract_telescope.push(Expr::Name(name.clone()));
+                actual_telescope.push(actual.clone());
+                actual_env.push(Expr::Annotation {
+                    value: Box::new(actual.clone()),
+                    ty: Box::new(actual_ty),
+                });
+            }
+            let abstract_value_ty = apply_expr(Expr::Name(declaration.name), abstract_telescope);
+            self.locals
+                .push((names.last().unwrap().clone(), abstract_value_ty));
+            actual_env.push(Expr::Annotation {
+                value: Box::new(scrutinee.clone()),
+                ty: Box::new(scrutinee_ty),
+            });
+            let result = self.term(&renamed)?;
+            self.surface_expr_in(result, &actual_env)
+        })();
+        self.locals.truncate(saved);
+        inferred
+    }
+
     fn lower_match(
         &mut self,
         scrutinee: &Expr,
@@ -762,9 +826,14 @@ impl Elaborator {
                 result,
                 branches,
             } => {
-                let expected = expected.ok_or_else(|| {
-                    Error::plain("explicit match currently requires an expected result type")
-                })?;
+                let inferred;
+                let expected = match expected {
+                    Some(expected) => expected,
+                    None => {
+                        inferred = self.explicit_match_type(scrutinee, binders, result)?;
+                        &inferred
+                    }
+                };
                 return self.lower_match(scrutinee, branches, expected, Some((binders, result)));
             }
 
@@ -1549,9 +1618,15 @@ impl Elaborator {
                 "cannot infer an unannotated lambda in a let binding",
             )),
             Expr::If { .. } => Err(Error::plain("cannot infer surface if yet")),
-            Expr::Match { .. } | Expr::MatchReturn { .. } => {
-                Err(Error::plain("cannot infer surface match yet"))
-            }
+            Expr::MatchReturn {
+                scrutinee,
+                binders,
+                result,
+                ..
+            } => self.explicit_match_type(scrutinee, binders, result),
+            Expr::Match { .. } => Err(Error::plain(
+                "cannot infer surface match without an explicit return motive",
+            )),
         }
     }
 

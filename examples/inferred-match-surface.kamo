@@ -1,0 +1,22 @@
+# An explicit return motive supplies the type of an otherwise unannotated let.
+def copy (A : Type) (n : Nat) (xs : Vec A n) : Vec A n =
+  let copied = match xs return (length, value => Vec A length) {
+    nil => nil A;
+    cons k head tail => cons A k head tail
+  }; copied
+
+def proof (n : Nat) : n == n =
+  let p = match n return (value => value == value) {
+    zero => path i => zero;
+    suc k => path i => suc k
+  }; p
+
+def identity (b : Bool) : Bool =
+  (match b return (value => Bool -> Bool) {
+    true => \x => x;
+    false => \x => x
+  }) b
+
+def singleton : Vec Bool (suc zero) = cons Bool zero true (nil Bool)
+def copied : Vec Bool (suc zero) = copy Bool (suc zero) singleton
+def result : Bool = identity true
