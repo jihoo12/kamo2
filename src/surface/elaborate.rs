@@ -392,6 +392,130 @@ impl Elaborator {
         body
     }
 
+    fn nested_branches(
+        &mut self,
+        branches: &[super::ast::MatchBranch],
+    ) -> Result<Vec<super::ast::MatchBranch>> {
+        let mut groups: Vec<(String, Vec<PatternRow>)> = Vec::new();
+        for branch in branches {
+            let Pattern::Constructor { name, arguments } = &branch.pattern else {
+                return Err(Error::plain("match branches must use constructor patterns"));
+            };
+            let constructor = self.resolve_constructor(name)?;
+            if arguments.len() != self.core.constructors[constructor.index()].arguments.len() {
+                return Err(Error::plain("constructor pattern has incorrect arity"));
+            }
+            let mut seen = HashSet::new();
+            validate_pattern_binders(&branch.pattern, &mut seen)?;
+            // Nested eliminations have different motives from the outer function.
+            // Do not reinterpret a recursive call using an unrelated inner IH.
+            if let Some(name) = &self.current_definition
+                && !pattern_binds(&branch.pattern, name)
+                && substitute(&branch.body, name, &Expr::Name("<nested-recursion>".into()))
+                    != branch.body
+            {
+                return Err(Error::plain(
+                    "self recursion in nested-pattern matches is not supported; use flat patterns",
+                ));
+            }
+            let row = (arguments.clone(), branch.body.clone());
+            if let Some((_, rows)) = groups
+                .iter_mut()
+                .find(|(constructor, _)| constructor == name)
+            {
+                rows.push(row);
+            } else {
+                groups.push((name.clone(), vec![row]));
+            }
+        }
+        let mut result = Vec::new();
+        for (name, rows) in groups {
+            let columns = (0..rows[0].0.len())
+                .map(|_| self.fresh_name())
+                .collect::<Vec<_>>();
+            let body = self.pattern_tree(&columns, rows, 0)?;
+            result.push(super::ast::MatchBranch {
+                pattern: Pattern::Constructor {
+                    name,
+                    arguments: columns.into_iter().map(Pattern::Name).collect(),
+                },
+                body,
+            });
+        }
+        Ok(result)
+    }
+
+    fn pattern_tree(
+        &mut self,
+        columns: &[String],
+        rows: Vec<PatternRow>,
+        depth: usize,
+    ) -> Result<Expr> {
+        if depth > 128 {
+            return Err(Error::plain("nested pattern depth limit exceeded"));
+        }
+        let column = (0..columns.len()).find(|column| {
+            rows.iter()
+                .any(|(patterns, _)| matches!(patterns[*column], Pattern::Constructor { .. }))
+        });
+        let Some(column) = column else {
+            if rows.len() != 1 {
+                return Err(Error::plain("overlapping nested constructor patterns"));
+            }
+            let (patterns, mut body) = rows.into_iter().next().unwrap();
+            for (pattern, name) in patterns.into_iter().zip(columns) {
+                let Pattern::Name(binder) = pattern else {
+                    unreachable!()
+                };
+                body = substitute(&body, &binder, &Expr::Name(name.clone()));
+            }
+            return Ok(body);
+        };
+        let mut groups: Vec<(String, Vec<PatternRow>)> = Vec::new();
+        for (mut patterns, body) in rows {
+            let Pattern::Constructor { name, arguments } = patterns.remove(column) else {
+                return Err(Error::plain(
+                    "mixed variable and constructor patterns overlap in a nested match",
+                ));
+            };
+            let constructor = self.resolve_constructor(&name)?;
+            if arguments.len() != self.core.constructors[constructor.index()].arguments.len() {
+                return Err(Error::plain(
+                    "nested constructor pattern has incorrect arity",
+                ));
+            }
+            patterns.splice(column..column, arguments);
+            if let Some((_, group)) = groups
+                .iter_mut()
+                .find(|(constructor, _)| constructor == &name)
+            {
+                group.push((patterns, body));
+            } else {
+                groups.push((name, vec![(patterns, body)]));
+            }
+        }
+        let mut branches = Vec::new();
+        for (name, rows) in groups {
+            let constructor = self.resolve_constructor(&name)?;
+            let names = (0..self.core.constructors[constructor.index()].arguments.len())
+                .map(|_| self.fresh_name())
+                .collect::<Vec<_>>();
+            let mut inner_columns = columns.to_vec();
+            inner_columns.splice(column..column + 1, names.clone());
+            branches.push(super::ast::MatchBranch {
+                pattern: Pattern::Constructor {
+                    name,
+                    arguments: names.into_iter().map(Pattern::Name).collect(),
+                },
+                body: self.pattern_tree(&inner_columns, rows, depth + 1)?,
+            });
+        }
+        Ok(Expr::Match {
+            scrutinee: Box::new(Expr::Name(columns[column].clone())),
+            branches,
+        })
+    }
+
     fn lower_match(
         &mut self,
         scrutinee: &Expr,
@@ -399,6 +523,16 @@ impl Elaborator {
         expected: &Expr,
         explicit: Option<(&[String], &Expr)>,
     ) -> Result<TermId> {
+        let expanded;
+        let branches = if branches
+            .iter()
+            .any(|branch| pattern_is_nested(&branch.pattern))
+        {
+            expanded = self.nested_branches(branches)?;
+            expanded.as_slice()
+        } else {
+            branches
+        };
         let inductive = self.validate_constructor_branches(branches)?;
         let scrutinee_ty = self.infer(scrutinee)?;
         let (scrutinee_family, parameter_exprs, index_exprs) =
@@ -1524,6 +1658,36 @@ impl Elaborator {
     }
 }
 
+type PatternRow = (Vec<Pattern>, Expr);
+
+fn pattern_is_nested(pattern: &Pattern) -> bool {
+    matches!(pattern, Pattern::Constructor { arguments, .. } if arguments.iter().any(|argument| matches!(argument, Pattern::Constructor { .. })))
+}
+
+fn pattern_binds(pattern: &Pattern, name: &str) -> bool {
+    match pattern {
+        Pattern::Name(binder) => binder == name,
+        Pattern::Constructor { arguments, .. } => arguments
+            .iter()
+            .any(|argument| pattern_binds(argument, name)),
+    }
+}
+
+fn validate_pattern_binders(pattern: &Pattern, seen: &mut HashSet<String>) -> Result<()> {
+    match pattern {
+        Pattern::Name(name) if !seen.insert(name.clone()) => {
+            return Err(Error::plain("duplicate pattern argument"));
+        }
+        Pattern::Constructor { arguments, .. } => {
+            for argument in arguments {
+                validate_pattern_binders(argument, seen)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn apply_expr(head: Expr, arguments: impl IntoIterator<Item = Expr>) -> Expr {
     arguments
         .into_iter()
@@ -1953,12 +2117,7 @@ fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
             branches: branches
                 .iter()
                 .map(|branch| {
-                    let shadows = match &branch.pattern {
-                        Pattern::Name(n) => n == name,
-                        Pattern::Constructor { arguments, .. } => arguments
-                            .iter()
-                            .any(|p| matches!(p, Pattern::Name(n) if n == name)),
-                    };
+                    let shadows = pattern_binds(&branch.pattern, name);
                     super::ast::MatchBranch {
                         pattern: branch.pattern.clone(),
                         body: if shadows {

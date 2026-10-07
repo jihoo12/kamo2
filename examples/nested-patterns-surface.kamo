@@ -1,0 +1,23 @@
+# Parentheses identify constructor patterns inside constructor arguments.
+def minusTwo (n : Nat) : Nat = match n {
+  zero => zero;
+  suc (zero) => zero;
+  suc (suc k) => k
+}
+
+def refl (n : Nat) : n == n = match n {
+  zero => path i => zero;
+  suc (zero) => path i => suc zero;
+  suc (suc k) => path i => suc (suc k)
+}
+
+def input : Nat = suc (suc (suc zero))
+def result : Nat = minusTwo input
+
+# Each nested Vec match refines its own index via the existing eliminator.
+def copyTwoLayers (A : Type) (n : Nat) (xs : Vec A n) : Vec A n =
+  match xs return (length, value => Vec A length) {
+    nil => nil A;
+    cons k head (nil) => cons A zero head (nil A);
+    cons k head (cons j next tail) => cons A (suc j) head (cons A j next tail)
+  }

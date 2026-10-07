@@ -292,8 +292,8 @@ not accepted.
 
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
-to the importing module. Nested patterns, general match-result inference,
-and general higher inductive types are not implemented.
+to the importing module. General match-result inference and general higher
+inductive types are not implemented.
 
 ## Universes
 
@@ -351,7 +351,7 @@ return `Vec A n`, using the tail hypothesis at its smaller length.
 Automatic motive synthesis is a conservative subset of dependent pattern
 matching: compound or repeated indices are left fixed, with no equation solving or impossible-branch pruning.
 Other local hypotheses are not generalized or rewritten. Matches still require
-an expected result type and exhaustive flat constructor patterns.
+an expected result type and exhaustive constructor patterns.
 
 An explicit elimination motive can be supplied with
 `match value return (index1, ..., scrutinee => resultType) { ... }`.
@@ -375,12 +375,41 @@ motive applied to each constructor's indices and value; recursive calls use
 induction hypotheses at the recursive child's indices. The kernel checks that
 the eliminator's result at the actual input matches the enclosing expected
 type. All constructors still require branches: this does not solve index
-equations or prune impossible cases. Flat constructor patterns and an expected
-result type remain required; unannotated match inference is deferred.
+equations or prune impossible cases. Exhaustive constructor patterns and an
+expected result type remain required; unannotated match inference is deferred.
 
 Constructor applications now synthesize their full dependent function/result
 types from metadata, supporting typed inference for `let xs = cons ...` and
 matching constructor expressions directly. See `examples/match-motives-surface.kamo`.
+
+Nested constructor arguments are parenthesized, including nullary constructors:
+
+```text
+def minusTwo (n : Nat) : Nat = match n {
+  zero => zero;
+  suc (zero) => zero;
+  suc (suc k) => k
+}
+```
+
+The elaborator groups outer constructors and compiles nested tests into existing
+flat matches. Each generated match must exhaust its constructor family; the
+kernel checks each ordinary dependent eliminator. Nested matches refine their
+own scrutinee and distinct variable indices through the existing motive rules.
+Repeated outer constructors are accepted when their nested alternatives are
+complete and disjoint. Multiple inspected arguments require complete constructor
+combinations. Bare argument names remain binders, so use `(zero)` rather than
+`zero` when inspecting a nullary constructor in an argument.
+
+Duplicate binders, duplicate/overlapping rows, and a mix of variable and
+constructor patterns at a selected split are rejected. No ordered catch-all
+semantics, wildcard fallbacks, impossible-branch pruning, or generalization of
+other dependent hypotheses is added. Self-recursive calls inside nested-pattern
+matches are currently rejected: an inner eliminator's hypothesis can have a
+different motive from the enclosing function. Existing flat-pattern structural
+recursion remains supported. Nested decision trees are limited to 128 splits
+along a branch. See `examples/nested-patterns-surface.kamo` for dependent
+natural-number proofs and indexed vector reconstruction.
 
 ## Higher inductive types
 
@@ -526,7 +555,8 @@ Completed foundations:
 
 Next milestones:
 
-- [ ] broader dependent pattern matching (index equations and nested patterns);
+- [x] exhaustive disjoint nested constructor patterns;
+- [ ] broader dependent pattern matching (index equations, nested-pattern recursion);
 - [x] cubical transport surface syntax (`coe`);
 - [x] explicit dependent path surface syntax (`PathP`);
 - [x] cubical composition and face conditions (`com`, `=`, `&&`, `||`);

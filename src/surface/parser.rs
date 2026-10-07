@@ -353,11 +353,21 @@ impl Parser {
     fn pattern(&mut self) -> Result<Pattern> {
         let name = self.name()?;
         let mut arguments = Vec::new();
-        while matches!(
-            self.tokens.get(self.index).map(|token| &token.kind),
-            Some(TokenKind::Name(_))
-        ) {
-            arguments.push(Pattern::Name(self.name()?));
+        loop {
+            if self.eat(&TokenKind::LParen) {
+                arguments.push(self.pattern()?);
+                self.expect(
+                    TokenKind::RParen,
+                    "expected ')' after nested constructor pattern",
+                )?;
+            } else if matches!(
+                self.tokens.get(self.index).map(|token| &token.kind),
+                Some(TokenKind::Name(_))
+            ) {
+                arguments.push(Pattern::Name(self.name()?));
+            } else {
+                break;
+            }
         }
         Ok(Pattern::Constructor { name, arguments })
     }

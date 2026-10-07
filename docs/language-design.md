@@ -33,6 +33,7 @@ The current system already has:
 - dependent pairs (`Sigma`), pair values, and projections (`fst`, `snd`);
 - surface Glue types, introduction, and projection with existing kernel checks;
 - explicit elimination motives and full constructor-application type synthesis;
+- exhaustive disjoint nested constructor patterns lowered to flat eliminations;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -111,9 +112,9 @@ is an existing checked generic eliminator, with no new kernel matching rule.
 
 Automatic synthesis does not implement full dependent pattern matching. Compound or repeated
 indices remain fixed; there is no index-equation solving, impossible-branch
-pruning, or generalization of other dependent local hypotheses. Flat exhaustive
-patterns and an expected result type are still required. Nested patterns and
-general match-result inference remain future work.
+pruning, or generalization of other dependent local hypotheses. Exhaustive
+patterns and an expected result type are still required. General match-result
+inference remains future work.
 
 Explicit motives use `match value return (indices..., scrutinee => resultType)`
 before the branch block. Index binders are ordered as in the family's metadata,
@@ -122,12 +123,25 @@ have metadata-derived dependent types, and scope only over the result type.
 The motive is lowered to the same kernel eliminator as automatic matches;
 constructor branches and recursive hypotheses instantiate it at their own
 indices and values. Compound and repeated indices and non-variable scrutinees
-can be generalized explicitly. Expected result types and exhaustive flat
+can be generalized explicitly. Expected result types and exhaustive
 patterns are still required; equation solving, impossible-branch pruning, and
 unannotated match-result inference remain deferred. Constructor applications
 now synthesize their full dependent types from checked metadata, enabling
 inference for let-bound constructors and expression scrutinees.
 See `examples/match-motives-surface.kamo`.
+
+Nested constructor arguments use parentheses: `suc (zero)` and `suc (suc k)`.
+The elaborator groups outer constructors, chooses inspected argument columns,
+and compiles complete disjoint rows into flat matches. Each generated match
+uses existing exhaustive-constructor validation and dependent motive synthesis.
+No kernel representation or equality rule changes. Binder substitution respects
+all nested pattern binders. Overlaps, duplicate binders, missing constructors,
+and mixed variable/constructor rows at a selected split are rejected; no
+ordered fallback or equation solving is added. Self recursion is rejected inside
+nested-pattern matches because an inner elimination hypothesis is not generally
+the enclosing function's hypothesis. Flat structural recursion remains available.
+Decision-tree depth is bounded at 128 splits. See
+`examples/nested-patterns-surface.kamo`.
 
 ### Cubical surface syntax
 
