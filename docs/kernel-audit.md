@@ -283,3 +283,33 @@ validation, checking, conversion/evaluation, face reasoning, and the native
 Glue/universe/HIT rules; optimized/reference agreement is not an independent
 soundness proof. These fixes do not claim bounded stack usage for every
 recursive checker/evaluator operation or a mechanized soundness theorem.
+
+## Metadata and generated-AST follow-up — 2026-10-07
+
+Review of `87f9dfe6a1e3ac52a3aea67bdbb5eafc9db7dcd5` found that the
+per-family positivity check alone did not rule out cycles across families.
+Forged metadata with a field `B` in `A` and a field `A -> Bool` in `B` passed
+kernel entry in both modes. No public source-level false proof was demonstrated.
+Kernel entry now propagates family dependencies through the syntax DAG and
+requires metadata to refer only to its own family or earlier families. Existing
+per-family direct-recursion/positivity checks still apply. This deliberately
+rejects forward and mutual family dependencies rather than claiming a rule for
+mutual inductives. Backward dependencies and direct recursion remain supported.
+
+The same pass found that metadata roots were omitted from syntax-ID validation.
+A constructor field with an out-of-range `TermId` panicked. All family telescope,
+constructor argument/result, and higher-constructor boundary roots are now
+validated before recursive metadata checks. Global aliases in these roots are
+rejected; ordinary/higher constructor and inductive table references in arena
+nodes are also range-checked. Regression tests require errors for malformed
+metadata, syntax IDs, and table IDs.
+
+Finally, 5,000 definition parameters created an unbounded nested Pi/Lambda AST
+without exceeding parser recursion limits. A 55,023-byte source aborted on a
+2 MiB stack. Definition and data headers now accept at most 64 parameters. An
+iterative post-parse traversal limits combined expression, pattern, and face AST
+depth to 128, including generated definition binders and data telescope prefixes.
+This catches composed flat chains as well as parameter-generated nesting before
+elaboration. Small-stack regressions cover definition/data headers and combined
+application-chain nesting. These limits remain conservative availability guards,
+not a guarantee of bounded stack usage in every kernel operation.

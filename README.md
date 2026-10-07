@@ -652,3 +652,9 @@ edges must point to earlier nodes. Surface parsing has conservative limits of
 exceeding these limits returns a resource error. Surface module reads are bounded
 before allocating an entire file. See the 2026-10-07 follow-up in
 [`docs/kernel-audit.md`](docs/kernel-audit.md) for regressions and remaining limits.
+
+Metadata roots and inductive/constructor table references are range-checked at
+kernel entry. Family metadata may depend only on its own or earlier families;
+mutual inductives are unsupported. Surface definition/data headers allow at
+most 64 parameters, and the combined parsed/generated AST depth is limited to
+128 before elaboration.

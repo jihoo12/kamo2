@@ -169,9 +169,38 @@ impl Program {
     /// Frontends may only refer to already checked declarations.
     pub(crate) fn validate_global_references(&self) -> Result<()> {
         let mut dependencies: Vec<Option<usize>> = Vec::with_capacity(self.terms.len());
+        let mut families: Vec<Option<usize>> = Vec::with_capacity(self.terms.len());
         for position in 0..self.terms.len() {
             let mut children = Vec::new();
             let mut dependency = None;
+            let mut family_dependency = None;
+            let node = &self.terms.get(TermId::new(position)).term;
+            let owner = match node {
+                Term::Inductive(id)
+                | Term::Elim { inductive: id, .. }
+                | Term::HitElim { inductive: id, .. } => Some(*id),
+                Term::Constructor(id) => Some(
+                    self.constructors
+                        .get(id.index())
+                        .ok_or_else(|| Error::plain("constructor reference is out of range"))?
+                        .inductive,
+                ),
+                Term::HigherApp { constructor, .. } => Some(
+                    self.higher
+                        .get(constructor.index())
+                        .ok_or_else(|| {
+                            Error::plain("higher constructor reference is out of range")
+                        })?
+                        .inductive,
+                ),
+                _ => None,
+            };
+            if let Some(owner) = owner {
+                if owner.index() >= self.inductives.len() {
+                    return Err(Error::plain("inductive reference is out of range"));
+                }
+                family_dependency = Some(owner.index());
+            }
             match &self.terms.get(TermId::new(position)).term {
                 Term::Global(index) => {
                     if *index >= self.decls.len() {
@@ -262,8 +291,10 @@ impl Program {
                     ));
                 }
                 dependency = dependency.max(dependencies[child.index()]);
+                family_dependency = family_dependency.max(families[child.index()]);
             }
             dependencies.push(dependency);
+            families.push(family_dependency);
         }
         for (index, declaration) in self.decls.iter().enumerate() {
             for root in [declaration.ty, declaration.body] {
@@ -275,6 +306,49 @@ impl Program {
                         "global reference must target an earlier declaration",
                     ));
                 }
+            }
+        }
+        let check_metadata = |root: TermId, owner: InductiveId| -> Result<()> {
+            if owner.index() >= self.inductives.len() {
+                return Err(Error::plain("metadata owner is out of range"));
+            }
+            let global = dependencies
+                .get(root.index())
+                .ok_or_else(|| Error::plain("metadata syntax reference is out of range"))?;
+            if global.is_some() {
+                return Err(Error::plain(
+                    "global aliases are not allowed in inductive metadata",
+                ));
+            }
+            if families[root.index()].is_some_and(|target| target > owner.index()) {
+                return Err(Error::plain(
+                    "metadata may only reference its own or earlier inductive families",
+                ));
+            }
+            Ok(())
+        };
+        for family in &self.inductives {
+            for entry in family.parameters.iter().chain(&family.indices) {
+                check_metadata(entry.ty, family.id)?;
+            }
+        }
+        for constructor in &self.constructors {
+            for entry in &constructor.arguments {
+                check_metadata(entry.ty, constructor.inductive)?;
+            }
+            for root in &constructor.result_indices {
+                check_metadata(*root, constructor.inductive)?;
+            }
+        }
+        for constructor in &self.higher {
+            for entry in &constructor.arguments {
+                check_metadata(entry.ty, constructor.inductive)?;
+            }
+            for root in &constructor.result_indices {
+                check_metadata(*root, constructor.inductive)?;
+            }
+            for piece in &constructor.boundary.pieces {
+                check_metadata(piece.term, constructor.inductive)?;
             }
         }
         Ok(())

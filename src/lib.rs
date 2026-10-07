@@ -387,3 +387,78 @@ mod trust_boundary_tests {
         CheckedProgram::check_surface("def first : Bool = true def second : Bool = first").unwrap();
     }
 }
+
+#[cfg(test)]
+mod metadata_boundary_tests {
+    use super::*;
+    use crate::arena::Key;
+    fn raw() -> syntax::Program {
+        let source = surface::parser::parse(
+            "data A : Type where { a : Bool -> A } data B : Type where { b : Bool -> B }",
+        )
+        .unwrap();
+        surface::elaborate(&source).unwrap()
+    }
+    #[test]
+    fn mutually_negative_families_are_rejected_in_both_modes() {
+        for optimized in [false, true] {
+            let mut program = raw();
+            let a = program.alloc(syntax::Term::Inductive(syntax::InductiveId::new(0)), 0);
+            let b = program.alloc(syntax::Term::Inductive(syntax::InductiveId::new(1)), 0);
+            let bool_ty = program.alloc(syntax::Term::Bool, 0);
+            let negative = program.alloc(syntax::Term::Pi(a, bool_ty), 0);
+            program.constructors[0].arguments[0].ty = b;
+            program.constructors[1].arguments[0].ty = negative;
+            let error = CheckedProgram::check_program(
+                program,
+                Options {
+                    optimized,
+                    ..Default::default()
+                },
+            )
+            .unwrap_err();
+            assert!(error.message.contains("earlier inductive"), "{error}");
+        }
+    }
+    #[test]
+    fn invalid_metadata_roots_return_errors() {
+        for location in 0..4 {
+            let mut program = raw();
+            let bad = syntax::TermId::new(usize::MAX);
+            match location {
+                0 => program.constructors[0].arguments[0].ty = bad,
+                1 => program.constructors[0].result_indices.push(bad),
+                2 => program.inductives[0]
+                    .parameters
+                    .push(syntax::TelescopeEntry {
+                        name: "x".into(),
+                        ty: bad,
+                    }),
+                _ => program.inductives[0].indices.push(syntax::TelescopeEntry {
+                    name: "x".into(),
+                    ty: bad,
+                }),
+            }
+            let error = CheckedProgram::check_program(program, Options::default()).unwrap_err();
+            assert!(
+                error.message.contains("metadata syntax reference"),
+                "{error}"
+            );
+        }
+    }
+    #[test]
+    fn invalid_semantic_table_references_return_errors() {
+        for term in [
+            syntax::Term::Inductive(syntax::InductiveId::new(usize::MAX)),
+            syntax::Term::Constructor(syntax::ConstructorId::new(usize::MAX)),
+        ] {
+            let mut program = raw();
+            program.alloc(term, 0);
+            assert!(CheckedProgram::check_program(program, Options::default()).is_err());
+        }
+    }
+    #[test]
+    fn backward_family_dependencies_and_direct_recursion_remain_valid() {
+        CheckedProgram::check_surface("data Earlier : Type where { earlier : Earlier } data Later : Type where { wrap : Earlier -> Later; step : Later -> Later }").unwrap();
+    }
+}

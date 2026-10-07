@@ -97,7 +97,9 @@ pub fn parse(source: &str) -> Result<Program> {
         index: 0,
         depth: 0,
     };
-    parser.program()
+    let program = parser.program()?;
+    validate_program_depth(&program)?;
+    Ok(program)
 }
 
 struct Parser {
@@ -197,6 +199,12 @@ impl Parser {
             self.tokens.get(self.index).map(|t| &t.kind),
             Some(TokenKind::LParen)
         ) {
+            if parameters.len() >= 64 {
+                return Err(Error::at(
+                    self.offset(),
+                    "surface parameter budget exceeded",
+                ));
+            }
             parameters.push(self.binder()?);
         }
         self.expect(TokenKind::Colon, "expected ':' after data header")?;
@@ -238,6 +246,12 @@ impl Parser {
         let name = self.name()?;
         let mut parameters = Vec::new();
         while self.eat(&TokenKind::LParen) {
+            if parameters.len() >= 64 {
+                return Err(Error::at(
+                    self.offset(),
+                    "surface parameter budget exceeded",
+                ));
+            }
             let parameter = self.name()?;
             self.expect(TokenKind::Colon, "expected ':' in parameter")?;
             let ty = self.expr()?;
@@ -857,6 +871,162 @@ fn split_constructor(mut ty: Expr) -> (Vec<(String, Expr)>, Expr) {
         ty = *codomain;
     }
     (arguments, ty)
+}
+
+// Parser recursion and flat chains are bounded separately; also bound their
+// combined AST depth before recursive elaboration and cloning.
+fn validate_program_depth(program: &Program) -> Result<()> {
+    enum Node<'a> {
+        Expr(&'a Expr),
+        Face(&'a Face),
+        Pattern(&'a Pattern),
+    }
+    let mut stack = Vec::new();
+    for item in &program.declarations {
+        match item {
+            Item::Definition(def) => {
+                if let Some(ty) = &def.ty {
+                    stack.push((Node::Expr(ty), 0));
+                }
+                stack.push((Node::Expr(&def.value), 0));
+            }
+            Item::Data(data) => {
+                for (_, ty) in data.parameters.iter().chain(&data.indices) {
+                    stack.push((Node::Expr(ty), data.parameters.len() + data.indices.len()));
+                }
+                for constructor in &data.constructors {
+                    let depth = data.parameters.len() + constructor.arguments.len();
+                    for (_, ty) in &constructor.arguments {
+                        stack.push((Node::Expr(ty), depth));
+                    }
+                    stack.push((Node::Expr(&constructor.result), depth));
+                }
+            }
+        }
+    }
+    while let Some((node, depth)) = stack.pop() {
+        if depth > 128 {
+            return Err(Error::plain("surface AST depth budget exceeded"));
+        }
+        let next = depth + 1;
+        match node {
+            Node::Face(Face::And(a, b) | Face::Or(a, b)) => {
+                stack.push((Node::Face(a), next));
+                stack.push((Node::Face(b), next));
+            }
+            Node::Face(_) => {}
+            Node::Pattern(Pattern::Constructor { arguments, .. }) => {
+                stack.extend(arguments.iter().map(|p| (Node::Pattern(p), next)));
+            }
+            Node::Pattern(Pattern::Name(_)) => {}
+            Node::Expr(expr) => {
+                let mut children: Vec<&Expr> = Vec::new();
+                match expr {
+                    Expr::Annotation { value: a, ty: b }
+                    | Expr::Sigma {
+                        domain: a,
+                        codomain: b,
+                        ..
+                    }
+                    | Expr::Pi {
+                        domain: a,
+                        codomain: b,
+                        ..
+                    }
+                    | Expr::Pair {
+                        first: a,
+                        second: b,
+                    }
+                    | Expr::Apply {
+                        function: a,
+                        argument: b,
+                    }
+                    | Expr::Let {
+                        value: a, body: b, ..
+                    }
+                    | Expr::Equality { left: a, right: b }
+                    | Expr::Unglue { ty: a, value: b } => children.extend([a.as_ref(), b.as_ref()]),
+                    Expr::Fst(a)
+                    | Expr::Snd(a)
+                    | Expr::Suc(a)
+                    | Expr::Lambda { body: a, .. }
+                    | Expr::PathLambda { body: a, .. }
+                    | Expr::PathApply { path: a, .. } => children.push(a),
+                    Expr::PathP {
+                        family,
+                        left,
+                        right,
+                        ..
+                    } => children.extend([family.as_ref(), left.as_ref(), right.as_ref()]),
+                    Expr::Coe { family, cap, .. } => {
+                        children.extend([family.as_ref(), cap.as_ref()])
+                    }
+                    Expr::If {
+                        condition,
+                        then_branch,
+                        else_branch,
+                    } => children.extend([
+                        condition.as_ref(),
+                        then_branch.as_ref(),
+                        else_branch.as_ref(),
+                    ]),
+                    Expr::Match {
+                        scrutinee,
+                        branches,
+                    }
+                    | Expr::MatchReturn {
+                        scrutinee,
+                        branches,
+                        ..
+                    } => {
+                        children.push(scrutinee);
+                        if let Expr::MatchReturn { result, .. } = expr {
+                            children.push(result);
+                        }
+                        for branch in branches {
+                            children.push(&branch.body);
+                            stack.push((Node::Pattern(&branch.pattern), next));
+                        }
+                    }
+                    Expr::Glue { base, branches } => {
+                        children.push(base);
+                        for (face, ty, equiv) in branches {
+                            stack.push((Node::Face(face), next));
+                            children.extend([ty, equiv]);
+                        }
+                    }
+                    Expr::System { ty, branches } | Expr::GlueIntro { ty, branches, .. } => {
+                        children.push(ty);
+                        if let Expr::GlueIntro { base, .. } = expr {
+                            children.push(base);
+                        }
+                        for (face, body) in branches {
+                            stack.push((Node::Face(face), next));
+                            children.push(body);
+                        }
+                    }
+                    Expr::Com {
+                        family, cap, tubes, ..
+                    } => {
+                        children.extend([family.as_ref(), cap.as_ref()]);
+                        for (face, body) in tubes {
+                            stack.push((Node::Face(face), next));
+                            children.push(body);
+                        }
+                    }
+                    Expr::Name(_)
+                    | Expr::Universe(_)
+                    | Expr::Bool
+                    | Expr::True
+                    | Expr::False
+                    | Expr::Nat
+                    | Expr::Zero => {}
+                }
+                stack.extend(children.into_iter().map(|e| (Node::Expr(e), next)));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

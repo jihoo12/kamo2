@@ -66,3 +66,36 @@ fn oversized_surface_imports_are_rejected() {
     );
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn parameter_lists_and_combined_ast_depth_are_bounded() {
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            for source in [
+                format!("def value {}: Bool = true", "(x : Bool) ".repeat(5000)),
+                format!("data Large {}: Type where {{}}", "(A : Type) ".repeat(5000)),
+            ] {
+                assert!(
+                    CheckedProgram::check_surface(&source)
+                        .unwrap_err()
+                        .message
+                        .contains("parameter budget")
+                );
+            }
+            let mut expr = "true".to_string();
+            for _ in 0..3 {
+                expr = format!("({expr}) {}", "true ".repeat(64));
+            }
+            let source = format!("def value : Bool = {expr}");
+            assert!(
+                kamo::surface::parser::parse(&source)
+                    .unwrap_err()
+                    .message
+                    .contains("AST depth budget")
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
