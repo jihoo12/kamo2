@@ -191,8 +191,32 @@ def eta (A : Type) (x : A) (y : A) (p : x == y) : x == y =
 ```
 
 See `examples/systems-surface.kamo` for total systems and systems local to
-composition faces. Glue syntax remains future work; surface dependent pairs
-and projections are needed to construct the kernel's equivalence witnesses.
+composition faces. Glue syntax remains future work; dependent pairs and projections below
+provide the kernel's equivalence witnesses.
+
+Dependent pairs use `Sigma (x : A) => B`, where `x` binds a term variable
+in `B`. Pair values are `(a, b)`; they require an expected Sigma type. The
+first component is checked at `A`, and the second at `B[a/x]`, including
+lambdas, matches, nested pairs, and paths. Named Sigma type families are unfolded
+with fresh binders and bounded elaboration; the kernel still verifies conversion.
+`fst p` has type `A`; `snd p` has type `B[fst p/x]`. Projections take a postfix
+argument, so use `fst (f x)` for a compound application and `(fst p) @ i` to
+apply a dimension to the projection result. Sigma bodies extend to the right;
+parenthesize a Sigma type when using it as a function domain or argument.
+
+```text
+def packed : Sigma (A : Type) => A = (Bool, true)
+def packedType : Type = fst packed
+def packedValue : Bool = snd packed
+```
+
+Sigma universes use the maximum of the component levels. Pair values are
+checked against expected types rather than inferred, so an unannotated
+`let p = (a, b); ...` is not supported; pass a pair to a typed parameter or
+use a typed definition. The new syntax lowers to existing `Sigma`, `Pair`,
+`Fst`, and `Snd` terms. `examples/pairs-surface.kamo` includes dependent
+packages, proofs about first components, and the kernel's `Fiber`, `Contr`,
+`Equiv`, and identity-equivalence witness entirely in surface syntax.
 
 ## Current implementation
 
@@ -218,6 +242,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 
 - typed definitions and parameters;
 - dependent and non-dependent function types, lambdas, and application;
+- dependent pair types, pair values, and `fst`/`snd` projections;
 - `let` expressions;
 - homogeneous path equality, path abstraction, and dimension application;
 - explicit dependent path types with `PathP`;
@@ -447,7 +472,7 @@ Next milestones:
 - [x] explicit dependent path surface syntax (`PathP`);
 - [x] cubical composition and face conditions (`com`, `=`, `&&`, `||`);
 - [x] standalone compatible face systems (`system`);
-- [ ] surface dependent pairs and projections for equivalence witnesses;
+- [x] surface dependent pairs and projections for equivalence witnesses;
 - [ ] Glue surface syntax;
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 

@@ -1,0 +1,28 @@
+# Packages can carry a type and a value of that type.
+def packed : Sigma (A : Type) => A = (Bool, true)
+def packedType : Type = fst packed
+def packedValue : Bool = snd packed
+
+# The second component can be a proof about the first component.
+def Witness (A : Type) : Type = Sigma (x : A) => x == x
+def witness (A : Type) (x : A) : Witness A = (x, path i => x)
+def result : Bool = fst (witness Bool true)
+
+# The kernel's equivalence representation, now expressible in surface syntax.
+def Fiber (A : Type) (B : Type) (f : A -> B) (b : B) : Type =
+  Sigma (a : A) => f a == b
+
+def Contr (A : Type) : Type =
+  Sigma (center : A) => (point : A) -> center == point
+
+def Equiv (A : Type) (B : Type) : Type =
+  Sigma (f : A -> B) => (b : B) -> Contr (Fiber A B f b)
+
+def idEquiv (A : Type) : Equiv A A =
+  (\x => x,
+   \b => ((b, path j => b),
+          \h => path i =>
+            (com (k => A) 1 0 b { i = 0 => b; i = 1 => (snd h) @ k },
+             path j => com (k => A) 1 j b { i = 0 => b; i = 1 => (snd h) @ k })))
+
+def identityResult : Bool = (fst (idEquiv Bool)) true

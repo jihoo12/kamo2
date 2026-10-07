@@ -30,6 +30,7 @@ The current system already has:
 - surface composition with scoped tubes and Cartesian face equalities,
   conjunction, and disjunction, checked by the existing core;
 - standalone compatible systems with contextual coverage and overlap checks;
+- dependent pairs (`Sigma`), pair values, and projections (`fst`, `snd`);
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -175,8 +176,16 @@ alone do not cover a generic Cartesian dimension. Empty systems require an
 inconsistent context. See `examples/systems-surface.kamo`.
 
 General path-abstraction inference and readable surface syntax for Glue remain
-future work. Surface dependent pairs and projections should precede Glue so
-programs can construct its existing equivalence witnesses. Only endpoints and bound names are dimensions: there is no
+future work. Dependent pairs are now available as `Sigma (x : A) => B`, with pair values
+`(a, b)` and projections `fst` and `snd`. The second component checks against
+`B[a/x]` with the first component's known type retained for elaboration of
+uninferable terms such as lambdas. Projections synthesize the domain and the
+codomain instantiated with `fst p`. Named type families are decoded with fresh
+binders and exposed by bounded unfolding and beta reduction. The kernel retains
+all universe, conversion, and dependent-pair computation checks. Pair values
+require expected Sigma types; unannotated pair inference is deferred.
+`examples/pairs-surface.kamo` constructs an identity equivalence witness,
+preparing the next Glue surface milestone. Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
 work.

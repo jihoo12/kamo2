@@ -12,6 +12,7 @@ enum TokenKind {
     LBrace,
     RBrace,
     Colon,
+    Comma,
     Eq,
     EqualEqual,
     AndAnd,
@@ -50,6 +51,7 @@ fn lex(source: &str) -> Result<Vec<Token>> {
             b')' => (TokenKind::RParen, 1),
             b'{' => (TokenKind::LBrace, 1),
             b'}' => (TokenKind::RBrace, 1),
+            b',' => (TokenKind::Comma, 1),
             b':' => (TokenKind::Colon, 1),
             b'\\' => (TokenKind::Backslash, 1),
             b';' => (TokenKind::Semicolon, 1),
@@ -65,7 +67,7 @@ fn lex(source: &str) -> Result<Vec<Token>> {
                 let start = i;
                 while !(i >= bytes.len()
                     || bytes[i].is_ascii_whitespace()
-                    || b"(){}:=@&|\\;".contains(&bytes[i])
+                    || b"(),{}:=@&|\\;".contains(&bytes[i])
                     || bytes[i] == b'-' && bytes.get(i + 1) == Some(&b'>'))
                 {
                     i += 1;
@@ -387,6 +389,9 @@ impl Parser {
                         | "coe"
                         | "com"
                         | "system"
+                        | "Sigma"
+                        | "fst"
+                        | "snd"
                         | "PathP"
                         | "def"
                         | "let"
@@ -471,6 +476,28 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("Sigma") {
+            self.index += 1;
+            let (parameter, domain) = self.binder()?;
+            self.expect(TokenKind::FatArrow, "expected '=>' after Sigma binder")?;
+            return Ok(Expr::Sigma {
+                parameter,
+                domain: Box::new(domain),
+                codomain: Box::new(self.expr()?),
+            });
+        }
+        for projection in ["fst", "snd"] {
+            if self.peek_name(projection) {
+                self.index += 1;
+                let pair = Box::new(self.postfix()?);
+                return Ok(if projection == "fst" {
+                    Expr::Fst(pair)
+                } else {
+                    Expr::Snd(pair)
+                });
+            }
+        }
+
         if self.peek_name("system") {
             self.index += 1;
             let ty = self.postfix()?;
@@ -587,6 +614,14 @@ impl Parser {
             }
             self.index = save;
             let expr = self.expr()?;
+            if self.eat(&TokenKind::Comma) {
+                let second = self.expr()?;
+                self.expect(TokenKind::RParen, "expected ')' after pair")?;
+                return Ok(Expr::Pair {
+                    first: Box::new(expr),
+                    second: Box::new(second),
+                });
+            }
             self.expect(TokenKind::RParen, "expected ')'")?;
             return Ok(expr);
         }

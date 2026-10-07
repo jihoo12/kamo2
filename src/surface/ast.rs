@@ -61,6 +61,22 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// Internal type annotation used when dependent substitution needs a checked value.
+    Annotation {
+        value: Box<Expr>,
+        ty: Box<Expr>,
+    },
+    Sigma {
+        parameter: String,
+        domain: Box<Expr>,
+        codomain: Box<Expr>,
+    },
+    Pair {
+        first: Box<Expr>,
+        second: Box<Expr>,
+    },
+    Fst(Box<Expr>),
+    Snd(Box<Expr>),
     /// A compatible face system covering the current face context.
     System {
         ty: Box<Expr>,

@@ -592,6 +592,44 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::Annotation { value, ty } => {
+                let value = self.term_expected(value, Some(ty))?;
+                Term::Ann(value, self.term(ty)?)
+            }
+
+            Expr::Sigma {
+                parameter,
+                domain,
+                codomain,
+            } => {
+                let domain_term = self.term(domain)?;
+                self.locals.push((parameter.clone(), (**domain).clone()));
+                let codomain_term = self.term(codomain);
+                self.locals.pop();
+                Term::Sigma(domain_term, codomain_term?)
+            }
+            Expr::Pair { first, second } => {
+                let expected = expected.map(|ty| self.type_head(ty, 64)).transpose()?;
+                let Some(Expr::Sigma {
+                    parameter,
+                    domain,
+                    codomain,
+                }) = expected
+                else {
+                    return Err(Error::plain("pair requires an expected Sigma type"));
+                };
+                let first_term = self.term_expected(first, Some(&domain))?;
+                let first_typed = Expr::Annotation {
+                    value: first.clone(),
+                    ty: domain.clone(),
+                };
+                let second_ty = substitute(&codomain, &parameter, &first_typed);
+                let second_term = self.term_expected(second, Some(&second_ty))?;
+                Term::Pair(first_term, second_term)
+            }
+            Expr::Fst(pair) => Term::Fst(self.term(pair)?),
+            Expr::Snd(pair) => Term::Snd(self.term(pair)?),
+
             Expr::System { ty, branches } => {
                 let ty_term = self.term(ty)?;
                 let branches = branches
@@ -1040,17 +1078,39 @@ impl Elaborator {
                     body: Box::new(self.surface_expr_in(body, &inner)?),
                 })
             }
-            Term::Pi(domain, codomain) => {
+            Term::Pi(domain, codomain) | Term::Sigma(domain, codomain) => {
                 let domain = self.surface_expr_in(domain, env)?;
                 let name = self.fresh_name();
                 let mut inner = env.to_vec();
                 inner.push(Expr::Name(name.clone()));
-                Ok(Expr::Pi {
-                    parameter: Some(name),
-                    domain: Box::new(domain),
-                    codomain: Box::new(self.surface_expr_in(codomain, &inner)?),
-                })
+                let codomain = Box::new(self.surface_expr_in(codomain, &inner)?);
+                let domain = Box::new(domain);
+                Ok(
+                    if matches!(self.core.terms.get(term).term, Term::Sigma(..)) {
+                        Expr::Sigma {
+                            parameter: name,
+                            domain,
+                            codomain,
+                        }
+                    } else {
+                        Expr::Pi {
+                            parameter: Some(name),
+                            domain,
+                            codomain,
+                        }
+                    },
+                )
             }
+            Term::Ann(value, ty) => Ok(Expr::Annotation {
+                value: Box::new(self.surface_expr_in(value, env)?),
+                ty: Box::new(self.surface_expr_in(ty, env)?),
+            }),
+            Term::Pair(first, second) => Ok(Expr::Pair {
+                first: Box::new(self.surface_expr_in(first, env)?),
+                second: Box::new(self.surface_expr_in(second, env)?),
+            }),
+            Term::Fst(pair) => Ok(Expr::Fst(Box::new(self.surface_expr_in(pair, env)?))),
+            Term::Snd(pair) => Ok(Expr::Snd(Box::new(self.surface_expr_in(pair, env)?))),
             Term::Var(index) => env
                 .iter()
                 .rev()
@@ -1114,6 +1174,28 @@ impl Elaborator {
             return self.infer(&Expr::Name(ih));
         }
         match expr {
+            Expr::Annotation { ty, .. } => Ok((**ty).clone()),
+            Expr::Pair { .. } => Err(Error::plain(
+                "cannot infer a pair; provide an expected Sigma type",
+            )),
+            Expr::Fst(pair) | Expr::Snd(pair) => {
+                let ty = self.infer(pair)?;
+                match self.type_head(&ty, 64)? {
+                    Expr::Sigma {
+                        parameter,
+                        domain,
+                        codomain,
+                    } => {
+                        if matches!(expr, Expr::Fst(_)) {
+                            Ok(*domain)
+                        } else {
+                            Ok(substitute(&codomain, &parameter, &Expr::Fst(pair.clone())))
+                        }
+                    }
+                    _ => Err(Error::plain("projection expects a known Sigma type")),
+                }
+            }
+
             Expr::System { ty, .. } => Ok((**ty).clone()),
             Expr::PathP {
                 dimension, family, ..
@@ -1203,25 +1285,59 @@ impl Elaborator {
                 parameter,
                 domain,
                 codomain,
-            } => {
-                let domain_level = universe_level(&self.infer(domain)?)?;
-                self.locals.push((
-                    parameter.clone().unwrap_or_else(|| "_".to_owned()),
-                    (**domain).clone(),
-                ));
-                // Retain the same metadata and dimension scope while extending
-                // only the term context, rather than constructing a blank core.
-                let codomain_ty = self.infer(codomain);
-                self.locals.pop();
-                let codomain_level = universe_level(&codomain_ty?)?;
-                Ok(Expr::Universe(domain_level.max(codomain_level)))
-            }
+            } => self.infer_telescope(parameter.as_deref().unwrap_or("_"), domain, codomain),
+            Expr::Sigma {
+                parameter,
+                domain,
+                codomain,
+            } => self.infer_telescope(parameter, domain, codomain),
             Expr::Lambda { .. } => Err(Error::plain(
                 "cannot infer an unannotated lambda in a let binding",
             )),
             Expr::If { .. } => Err(Error::plain("cannot infer surface if yet")),
             Expr::Match { .. } => Err(Error::plain("cannot infer surface match yet")),
         }
+    }
+
+    // Expose named type families without changing the kernel's conversion rules.
+    // Decoding uses fresh binders before beta substitution to avoid capturing arguments.
+    fn type_head(&mut self, expr: &Expr, fuel: usize) -> Result<Expr> {
+        if fuel == 0 {
+            return Err(Error::plain("surface type unfolding limit exceeded"));
+        }
+        match expr {
+            Expr::Annotation { value, .. } => self.type_head(value, fuel - 1),
+            Expr::Name(name) if !self.locals.iter().any(|(local, _)| local == name) => {
+                if let Some(index) = self.globals.get(name).copied() {
+                    let body = self.core.decls[index].body;
+                    let body = self.surface_expr_in(body, &[])?;
+                    self.type_head(&body, fuel - 1)
+                } else {
+                    Ok(expr.clone())
+                }
+            }
+            Expr::Apply { function, argument } => match self.type_head(function, fuel - 1)? {
+                Expr::Lambda { parameter, body } => {
+                    self.type_head(&substitute(&body, &parameter, argument), fuel - 1)
+                }
+                function => Ok(Expr::Apply {
+                    function: Box::new(function),
+                    argument: argument.clone(),
+                }),
+            },
+            _ => Ok(expr.clone()),
+        }
+    }
+
+    fn infer_telescope(&mut self, parameter: &str, domain: &Expr, codomain: &Expr) -> Result<Expr> {
+        let domain_level = universe_level(&self.infer(domain)?)?;
+        self.locals.push((parameter.to_owned(), domain.clone()));
+        // Retain the same metadata and dimension scope while extending
+        // only the term context, rather than constructing a blank core.
+        let codomain_ty = self.infer(codomain);
+        self.locals.pop();
+        let codomain_level = universe_level(&codomain_ty?)?;
+        Ok(Expr::Universe(domain_level.max(codomain_level)))
     }
 }
 
@@ -1293,6 +1409,23 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::Annotation { value, ty } => {
+            replace_dimension(value, old, new);
+            replace_dimension(ty, old, new);
+        }
+
+        Expr::Sigma {
+            domain, codomain, ..
+        } => {
+            replace_dimension(domain, old, new);
+            replace_dimension(codomain, old, new);
+        }
+        Expr::Pair { first, second } => {
+            replace_dimension(first, old, new);
+            replace_dimension(second, old, new);
+        }
+        Expr::Fst(pair) | Expr::Snd(pair) => replace_dimension(pair, old, new),
+
         Expr::System { ty, branches } => {
             replace_dimension(ty, old, new);
             for (face, body) in branches {
@@ -1413,6 +1546,31 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::Annotation { value, ty } => Expr::Annotation {
+            value: Box::new(substitute(value, name, replacement)),
+            ty: Box::new(substitute(ty, name, replacement)),
+        },
+
+        Expr::Sigma {
+            parameter,
+            domain,
+            codomain,
+        } => Expr::Sigma {
+            parameter: parameter.clone(),
+            domain: Box::new(substitute(domain, name, replacement)),
+            codomain: if parameter == name {
+                codomain.clone()
+            } else {
+                Box::new(substitute(codomain, name, replacement))
+            },
+        },
+        Expr::Pair { first, second } => Expr::Pair {
+            first: Box::new(substitute(first, name, replacement)),
+            second: Box::new(substitute(second, name, replacement)),
+        },
+        Expr::Fst(pair) => Expr::Fst(Box::new(substitute(pair, name, replacement))),
+        Expr::Snd(pair) => Expr::Snd(Box::new(substitute(pair, name, replacement))),
+
         Expr::System { ty, branches } => Expr::System {
             ty: Box::new(substitute(ty, name, replacement)),
             branches: branches
