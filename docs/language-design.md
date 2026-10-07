@@ -35,6 +35,7 @@ The current system already has:
 - explicit elimination motives and full constructor-application type synthesis;
 - exhaustive disjoint nested constructor patterns lowered to flat eliminations;
 - result type synthesis for explicit-motive matches in unannotated contexts;
+- expression type ascriptions and typed lets with expected-type propagation;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -151,6 +152,19 @@ nested-pattern matches because an inner elimination hypothesis is not generally
 the enclosing function's hypothesis. Flat structural recursion remains available.
 Decision-tree depth is bounded at 128 splits. See
 `examples/nested-patterns-surface.kamo`.
+
+Expression ascriptions `(value : type)` and typed lets
+`let name : type = value; body` expose the existing core annotation mechanism.
+Typed lets wrap their values in annotations and reuse ordinary let lowering;
+the declared type checks the value and guides uninferable lambdas, pairs,
+paths, and matches. The kernel checks annotations even in unused bindings.
+Dependent Pi binders retain priority for `(x : A) -> B`; ascribed domains use
+`((x : A)) -> B`. The let name scopes over the body only. Function and path
+aliases use bounded unfolding for expected-type propagation and application.
+Let lowering prefers a synthesized body codomain, allowing it to depend on the
+bound value, and falls back to the surrounding expected type for uninferable
+bodies. Pair projection reduction is supported by the bounded type-head
+exposure used in elaboration. See `examples/annotations-surface.kamo`.
 
 ### Cubical surface syntax
 

@@ -81,7 +81,7 @@ pub enum Expr {
         ty: Box<Expr>,
         value: Box<Expr>,
     },
-    /// Internal type annotation used when dependent substitution needs a checked value.
+    /// A checked type annotation, also used internally for dependent substitution.
     Annotation {
         value: Box<Expr>,
         ty: Box<Expr>,

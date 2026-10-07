@@ -1,0 +1,23 @@
+# Typed lets provide expected types for values that cannot be inferred alone.
+def result : Bool =
+  let identity : Bool -> Bool = \x => x;
+  identity true
+
+def packaged : Bool =
+  let p : Sigma (A : Type) => A = (Bool, true);
+  snd p
+
+def proof (n : Nat) : n == n =
+  let p : n == n = match n {
+    zero => path i => zero;
+    suc k => path i => suc k
+  }; p
+
+# Parenthesized ascriptions work in function and projection positions.
+def applied : Bool = (\x => x : Bool -> Bool) true
+def projected : Bool = snd ((Bool, true) : Sigma (A : Type) => A)
+
+def Endomorphism (A : Type) : Type = A -> A
+def aliased : Bool =
+  let f : Endomorphism Bool = \x => let y = x; y;
+  f true

@@ -213,10 +213,40 @@ def packedValue : Bool = snd packed
 Sigma universes use the maximum of the component levels. Pair values are
 checked against expected types rather than inferred, so an unannotated
 `let p = (a, b); ...` is not supported; pass a pair to a typed parameter or
-use a typed definition. The new syntax lowers to existing `Sigma`, `Pair`,
+use a typed let or an explicit ascription as described below. The new syntax lowers to existing `Sigma`, `Pair`,
 `Fst`, and `Snd` terms. `examples/pairs-surface.kamo` includes dependent
 packages, proofs about first components, and the kernel's `Fiber`, `Contr`,
 `Equiv`, and identity-equivalence witness entirely in surface syntax.
+
+Expressions can be ascribed a type with `(value : TypeExpression)`, and let
+bindings can supply one with `let name : TypeExpression = value; body`.
+Both forms check the value against the annotation and synthesize that type;
+annotations do not suppress kernel checking, including for unused bindings.
+Typed lets lower to ordinary lets whose values carry existing core `Ann` terms.
+They provide expected types for lambdas, pairs, paths, and matches without
+requiring these values to infer their own types:
+
+```text
+def result : Bool =
+  let identity : Bool -> Bool = \x => x;
+  identity true
+
+def packaged : Bool =
+  let p : Sigma (A : Type) => A = (Bool, true);
+  snd p
+```
+
+Ascriptions require parentheses. Use `(\x => x : Bool -> Bool)` in a function
+position or `((Bool, true) : Sigma (A : Type) => A)` before projecting a pair.
+The existing dependent function syntax `(x : A) -> B` retains priority when
+`->` immediately follows the closing parenthesis. To use an ascribed name
+itself as a function domain, add another pair of parentheses, `((x : A)) -> B`.
+An annotated let's name does not bind in its annotation or value; it binds only
+in the body. Function and path aliases are exposed by bounded unfolding for
+expected-type propagation and application. When the let body can synthesize a
+dependent type, lowering retains that codomain so applying the binding to its
+actual value can reduce the result type. Uninferable bodies still receive the
+surrounding expected type. See `examples/annotations-surface.kamo`.
 
 Glue types use `Glue B { face => (A, equivalence); ... }`. On each face,
 `A` is a type in the same universe as `B`, and the witness has the kernel's
@@ -269,6 +299,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 `check_surface_with`. The surface parser/elaborator currently supports:
 
 - typed definitions and parameters;
+- expression type ascriptions and typed let bindings;
 - dependent and non-dependent function types, lambdas, and application;
 - dependent pair types, pair values, and `fst`/`snd` projections;
 - `let` expressions;
@@ -571,6 +602,7 @@ Completed foundations:
 - [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
 - [x] explicit match motives for compound/repeated indices and expression scrutinees;
 - [x] result type inference for matches with explicit motives;
+- [x] expression type ascriptions and typed let bindings;
 - [x] homogeneous cubical surface paths (`==`, `path`, `@`);
 - [x] gated Circle HIT elimination and scoped composition;
 - [x] scoped surface `data Circle` and higher path-constructor elaboration.

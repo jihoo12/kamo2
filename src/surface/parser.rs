@@ -337,8 +337,20 @@ impl Parser {
         if self.peek_name("let") {
             self.index += 1;
             let name = self.name()?;
+            let ty = if self.eat(&TokenKind::Colon) {
+                Some(self.expr()?)
+            } else {
+                None
+            };
             self.expect(TokenKind::Eq, "expected '=' in let expression")?;
             let value = self.expr()?;
+            let value = match ty {
+                Some(ty) => Expr::Annotation {
+                    value: Box::new(value),
+                    ty: Box::new(ty),
+                },
+                None => value,
+            };
             self.expect(TokenKind::Semicolon, "expected ';' in let expression")?;
             let body = self.expr()?;
             return Ok(Expr::Let {
@@ -694,15 +706,29 @@ impl Parser {
             {
                 let domain = self.expr()?;
                 self.expect(TokenKind::RParen, "expected ')' after dependent parameter")?;
-                self.expect(TokenKind::Arrow, "expected '->' after dependent parameter")?;
-                return Ok(Expr::Pi {
-                    parameter: Some(parameter),
-                    domain: Box::new(domain),
-                    codomain: Box::new(self.expr()?),
+                return Ok(if self.eat(&TokenKind::Arrow) {
+                    Expr::Pi {
+                        parameter: Some(parameter),
+                        domain: Box::new(domain),
+                        codomain: Box::new(self.expr()?),
+                    }
+                } else {
+                    Expr::Annotation {
+                        value: Box::new(Expr::Name(parameter)),
+                        ty: Box::new(domain),
+                    }
                 });
             }
             self.index = save;
             let expr = self.expr()?;
+            if self.eat(&TokenKind::Colon) {
+                let ty = self.expr()?;
+                self.expect(TokenKind::RParen, "expected ')' after type annotation")?;
+                return Ok(Expr::Annotation {
+                    value: Box::new(expr),
+                    ty: Box::new(ty),
+                });
+            }
             if self.eat(&TokenKind::Comma) {
                 let second = self.expr()?;
                 self.expect(TokenKind::RParen, "expected ')' after pair")?;

@@ -1075,8 +1075,9 @@ impl Elaborator {
                 Term::Path(family?, left, right)
             }
             Expr::PathLambda { dimension, body } => {
+                let expected = expected.map(|ty| self.type_head(ty, 64)).transpose()?;
                 let fresh = self.fresh_name();
-                let body_expected = match expected {
+                let body_expected = match expected.as_ref() {
                     Some(Expr::Equality { left, .. }) => Some(self.infer(left)?),
                     Some(Expr::PathP {
                         dimension, family, ..
@@ -1142,7 +1143,8 @@ impl Elaborator {
                 Term::Pi(domain_term, codomain_term?)
             }
             Expr::Lambda { parameter, body } => {
-                let (parameter_ty, body_expected) = match expected {
+                let expected = expected.map(|ty| self.type_head(ty, 64)).transpose()?;
+                let (parameter_ty, body_expected) = match expected.as_ref() {
                     Some(Expr::Pi {
                         parameter: binder,
                         domain,
@@ -1173,7 +1175,10 @@ impl Elaborator {
                         .ok_or_else(|| Error::plain("recursive induction hypothesis escaped"))?;
                     Term::Var(index)
                 } else {
-                    let function_ty = self.infer(function).ok();
+                    let function_ty = self
+                        .infer(function)
+                        .and_then(|ty| self.type_head(&ty, 64))
+                        .ok();
                     let function = self.term(function)?;
                     let argument = match function_ty.as_ref() {
                         Some(Expr::Pi { domain, .. }) => {
@@ -1188,9 +1193,18 @@ impl Elaborator {
                 let value_ty = self.infer(value)?;
                 let value_term = self.term(value)?;
                 self.locals.push((name.clone(), value_ty.clone()));
-                let body_ty = match expected {
-                    Some(expected) => expected.clone(),
-                    None => self.infer(body)?,
+                // Synthesize a dependent codomain when possible: after the
+                // application it can reduce using the actual let-bound value.
+                // An expected type still guides uninferable lambdas and matches.
+                let body_ty = match self.infer(body) {
+                    Ok(inferred) => inferred,
+                    Err(error) => match expected {
+                        Some(expected) => expected.clone(),
+                        None => {
+                            self.locals.pop();
+                            return Err(error);
+                        }
+                    },
                 };
                 let body_term = self.term_expected(body, Some(&body_ty))?;
                 let body_ty_term = self.term(&body_ty)?;
@@ -1564,7 +1578,8 @@ impl Elaborator {
             }
             Expr::PathApply { path, dimension } => {
                 self.dimension(dimension)?;
-                match self.infer(path)? {
+                let path_ty = self.infer(path)?;
+                match self.type_head(&path_ty, 64)? {
                     Expr::Equality { left, .. } => self.infer(&left),
                     Expr::PathP {
                         dimension: binder,
@@ -1584,19 +1599,23 @@ impl Elaborator {
             Expr::Bool | Expr::Nat => Ok(Expr::Universe(0)),
             Expr::True | Expr::False => Ok(Expr::Bool),
             Expr::Zero | Expr::Suc(_) => Ok(Expr::Nat),
-            Expr::Apply { function, argument } => match self.infer(function)? {
-                Expr::Pi {
-                    parameter,
-                    codomain,
-                    ..
-                } => Ok(match parameter {
-                    Some(parameter) => substitute(&codomain, &parameter, argument),
-                    None => *codomain,
-                }),
-                _ => Err(Error::plain(
-                    "cannot apply a non-function surface expression",
-                )),
-            },
+            Expr::Apply { function, argument } => {
+                let ty = self.infer(function)?;
+                let ty = self.type_head(&ty, 64)?;
+                match ty {
+                    Expr::Pi {
+                        parameter,
+                        codomain,
+                        ..
+                    } => Ok(match parameter {
+                        Some(parameter) => substitute(&codomain, &parameter, argument),
+                        None => *codomain,
+                    }),
+                    _ => Err(Error::plain(
+                        "cannot apply a non-function surface expression",
+                    )),
+                }
+            }
             Expr::Let { name, value, body } => {
                 let value_ty = self.infer(value)?;
                 self.locals.push((name.clone(), value_ty));
@@ -1698,6 +1717,21 @@ impl Elaborator {
             return Err(Error::plain("surface type unfolding limit exceeded"));
         }
         match expr {
+            Expr::Fst(pair) | Expr::Snd(pair) => match self.type_head(pair, fuel - 1)? {
+                Expr::Pair { first, second } => self.type_head(
+                    if matches!(expr, Expr::Fst(_)) {
+                        &first
+                    } else {
+                        &second
+                    },
+                    fuel - 1,
+                ),
+                pair => Ok(if matches!(expr, Expr::Fst(_)) {
+                    Expr::Fst(Box::new(pair))
+                } else {
+                    Expr::Snd(Box::new(pair))
+                }),
+            },
             Expr::Annotation { value, .. } => self.type_head(value, fuel - 1),
             Expr::Name(name) if !self.locals.iter().any(|(local, _)| local == name) => {
                 if let Some(index) = self.globals.get(name).copied() {
