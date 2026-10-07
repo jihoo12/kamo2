@@ -592,6 +592,48 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::Glue { base, branches } => {
+                let base_term = self.term(base)?;
+                let mut data = Vec::new();
+                for (face, ty, equivalence) in branches {
+                    let face = self.face(face)?;
+                    let ty_term = self.term(ty)?;
+                    let expected = self.equivalence_type(ty, base);
+                    let equivalence = self.term_expected(equivalence, Some(&expected))?;
+                    data.push((face, ty_term, equivalence));
+                }
+                Term::Glue(base_term, data)
+            }
+            Expr::GlueIntro { ty, base, branches } => {
+                let Expr::Glue {
+                    base: base_ty,
+                    branches: data,
+                } = self.type_head(ty, 64)?
+                else {
+                    return Err(Error::plain("glue requires an explicit Glue type"));
+                };
+                let ty = self.term(ty)?;
+                let base = self.term_expected(base, Some(&base_ty))?;
+                let mut elements = Vec::new();
+                for (face, body) in branches {
+                    let expected = data
+                        .iter()
+                        .find(|(f, _, _)| f == face)
+                        .or_else(|| {
+                            data.first()
+                                .filter(|(_, first, _)| data.iter().all(|(_, ty, _)| ty == first))
+                        })
+                        .map(|(_, ty, _)| ty);
+                    elements.push((self.face(face)?, self.term_expected(body, expected)?));
+                }
+                Term::GlueIntro(ty, base, elements)
+            }
+            Expr::Unglue { ty, value } => {
+                let ty_term = self.term(ty)?;
+                let value = self.term_expected(value, Some(ty))?;
+                Term::Unglue(ty_term, value)
+            }
+
             Expr::Annotation { value, ty } => {
                 let value = self.term_expected(value, Some(ty))?;
                 Term::Ann(value, self.term(ty)?)
@@ -1101,6 +1143,20 @@ impl Elaborator {
                     },
                 )
             }
+            Term::Glue(base, branches) => {
+                let base = Box::new(self.surface_expr_in(base, env)?);
+                let branches = branches
+                    .into_iter()
+                    .map(|(face, ty, eq)| {
+                        Ok((
+                            self.surface_face(&face)?,
+                            self.surface_expr_in(ty, env)?,
+                            self.surface_expr_in(eq, env)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Expr::Glue { base, branches })
+            }
             Term::Ann(value, ty) => Ok(Expr::Annotation {
                 value: Box::new(self.surface_expr_in(value, env)?),
                 ty: Box::new(self.surface_expr_in(ty, env)?),
@@ -1174,6 +1230,13 @@ impl Elaborator {
             return self.infer(&Expr::Name(ih));
         }
         match expr {
+            Expr::Glue { base, .. } => self.infer(base),
+            Expr::GlueIntro { ty, .. } => Ok((**ty).clone()),
+            Expr::Unglue { ty, .. } => match self.type_head(ty, 64)? {
+                Expr::Glue { base, .. } => Ok(*base),
+                _ => Err(Error::plain("unglue requires an explicit Glue type")),
+            },
+
             Expr::Annotation { ty, .. } => Ok((**ty).clone()),
             Expr::Pair { .. } => Err(Error::plain(
                 "cannot infer a pair; provide an expected Sigma type",
@@ -1299,6 +1362,67 @@ impl Elaborator {
         }
     }
 
+    fn surface_face(&self, face: &F) -> Result<Face> {
+        Ok(match face {
+            F::Top => Face::Top,
+            F::Bot => Face::Bottom,
+            F::Eq(a, b) => Face::Equal(self.surface_dimension(*a)?, self.surface_dimension(*b)?),
+            F::And(a, b) => Face::And(
+                Box::new(self.surface_face(a)?),
+                Box::new(self.surface_face(b)?),
+            ),
+            F::Or(a, b) => Face::Or(
+                Box::new(self.surface_face(a)?),
+                Box::new(self.surface_face(b)?),
+            ),
+        })
+    }
+
+    // Mirror the existing kernel representation: a map with contractible fibers.
+    // This is an elaboration hint; the kernel independently checks the witness.
+    fn equivalence_type(&mut self, domain: &Expr, base: &Expr) -> Expr {
+        let function = self.fresh_name();
+        let target = self.fresh_name();
+        let point = self.fresh_name();
+        let center = self.fresh_name();
+        let other = self.fresh_name();
+        let fiber = Expr::Sigma {
+            parameter: point.clone(),
+            domain: Box::new(domain.clone()),
+            codomain: Box::new(Expr::Equality {
+                left: Box::new(apply_expr(
+                    Expr::Name(function.clone()),
+                    [Expr::Name(point)],
+                )),
+                right: Box::new(Expr::Name(target.clone())),
+            }),
+        };
+        Expr::Sigma {
+            parameter: function,
+            domain: Box::new(Expr::Pi {
+                parameter: None,
+                domain: Box::new(domain.clone()),
+                codomain: Box::new(base.clone()),
+            }),
+            codomain: Box::new(Expr::Pi {
+                parameter: Some(target),
+                domain: Box::new(base.clone()),
+                codomain: Box::new(Expr::Sigma {
+                    parameter: center.clone(),
+                    domain: Box::new(fiber.clone()),
+                    codomain: Box::new(Expr::Pi {
+                        parameter: Some(other.clone()),
+                        domain: Box::new(fiber),
+                        codomain: Box::new(Expr::Equality {
+                            left: Box::new(Expr::Name(center)),
+                            right: Box::new(Expr::Name(other)),
+                        }),
+                    }),
+                }),
+            }),
+        }
+    }
+
     // Expose named type families without changing the kernel's conversion rules.
     // Decoding uses fresh binders before beta substitution to avoid capturing arguments.
     fn type_head(&mut self, expr: &Expr, fuel: usize) -> Result<Expr> {
@@ -1409,6 +1533,27 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::Glue { base, branches } => {
+            replace_dimension(base, old, new);
+            for (face, ty, eq) in branches {
+                replace_face(face, old, new);
+                replace_dimension(ty, old, new);
+                replace_dimension(eq, old, new);
+            }
+        }
+        Expr::GlueIntro { ty, base, branches } => {
+            replace_dimension(ty, old, new);
+            replace_dimension(base, old, new);
+            for (face, body) in branches {
+                replace_face(face, old, new);
+                replace_dimension(body, old, new);
+            }
+        }
+        Expr::Unglue { ty, value } => {
+            replace_dimension(ty, old, new);
+            replace_dimension(value, old, new);
+        }
+
         Expr::Annotation { value, ty } => {
             replace_dimension(value, old, new);
             replace_dimension(ty, old, new);
@@ -1546,6 +1691,32 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::Glue { base, branches } => Expr::Glue {
+            base: Box::new(substitute(base, name, replacement)),
+            branches: branches
+                .iter()
+                .map(|(face, ty, eq)| {
+                    (
+                        face.clone(),
+                        substitute(ty, name, replacement),
+                        substitute(eq, name, replacement),
+                    )
+                })
+                .collect(),
+        },
+        Expr::GlueIntro { ty, base, branches } => Expr::GlueIntro {
+            ty: Box::new(substitute(ty, name, replacement)),
+            base: Box::new(substitute(base, name, replacement)),
+            branches: branches
+                .iter()
+                .map(|(face, body)| (face.clone(), substitute(body, name, replacement)))
+                .collect(),
+        },
+        Expr::Unglue { ty, value } => Expr::Unglue {
+            ty: Box::new(substitute(ty, name, replacement)),
+            value: Box::new(substitute(value, name, replacement)),
+        },
+
         Expr::Annotation { value, ty } => Expr::Annotation {
             value: Box::new(substitute(value, name, replacement)),
             ty: Box::new(substitute(ty, name, replacement)),

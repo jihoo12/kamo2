@@ -1,0 +1,31 @@
+def Fiber (A : Type) (B : Type) (f : A -> B) (b : B) : Type =
+  Sigma (a : A) => f a == b
+
+def Contr (A : Type) : Type =
+  Sigma (center : A) => (point : A) -> center == point
+
+def Equiv (A : Type) (B : Type) : Type =
+  Sigma (f : A -> B) => (b : B) -> Contr (Fiber A B f b)
+
+def idEquiv (A : Type) : Equiv A A =
+  (\x => x,
+   \b => ((b, path j => b),
+          \h => path i =>
+            (com (k => A) 1 0 b { i = 0 => b; i = 1 => (snd h) @ k },
+             path j => com (k => A) 1 j b { i = 0 => b; i = 1 => (snd h) @ k })))
+
+
+# Glue gives a type path from an equivalence, using identity at the far endpoint.
+def ua (A : Type) (B : Type) (e : Equiv A B) : A == B =
+  path i => Glue B { i = 0 => (A, e); i = 1 => (B, idEquiv B) }
+
+def identityPath : Bool == Bool = ua Bool Bool (idEquiv Bool)
+def transported : Bool = coe (i => identityPath @ i) 0 1 true
+
+def G : Type = Glue Bool { top => (Bool, idEquiv Bool) }
+def element : G = glue G true { top => true }
+def projected : Bool = unglue G element
+
+def emptyG : Type = Glue Bool {}
+def emptyElement : emptyG = glue emptyG false {}
+def emptyProjected : Bool = unglue emptyG emptyElement

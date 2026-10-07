@@ -389,6 +389,9 @@ impl Parser {
                         | "coe"
                         | "com"
                         | "system"
+                        | "Glue"
+                        | "glue"
+                        | "unglue"
                         | "Sigma"
                         | "fst"
                         | "snd"
@@ -476,6 +479,56 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("Glue") {
+            self.index += 1;
+            let base = Box::new(self.postfix()?);
+            self.expect(TokenKind::LBrace, "expected '{' before Glue data")?;
+            let mut branches = Vec::new();
+            while !self.eat(&TokenKind::RBrace) {
+                let face = self.face()?;
+                self.expect(TokenKind::FatArrow, "expected '=>' after Glue face")?;
+                self.expect(
+                    TokenKind::LParen,
+                    "expected '(type, equivalence)' in Glue data",
+                )?;
+                let ty = self.expr()?;
+                self.expect(TokenKind::Comma, "expected ',' before Glue equivalence")?;
+                let equivalence = self.expr()?;
+                self.expect(TokenKind::RParen, "expected ')' after Glue data")?;
+                branches.push((face, ty, equivalence));
+                if self.eat(&TokenKind::RBrace) {
+                    break;
+                }
+                self.expect(TokenKind::Semicolon, "expected ';' between Glue branches")?;
+            }
+            return Ok(Expr::Glue { base, branches });
+        }
+        if self.peek_name("glue") || self.peek_name("unglue") {
+            let introduction = self.peek_name("glue");
+            self.index += 1;
+            let ty = Box::new(self.postfix()?);
+            let value = Box::new(self.postfix()?);
+            if !introduction {
+                return Ok(Expr::Unglue { ty, value });
+            }
+            self.expect(TokenKind::LBrace, "expected '{' before glue elements")?;
+            let mut branches = Vec::new();
+            while !self.eat(&TokenKind::RBrace) {
+                let face = self.face()?;
+                self.expect(TokenKind::FatArrow, "expected '=>' after glue face")?;
+                branches.push((face, self.expr()?));
+                if self.eat(&TokenKind::RBrace) {
+                    break;
+                }
+                self.expect(TokenKind::Semicolon, "expected ';' between glue elements")?;
+            }
+            return Ok(Expr::GlueIntro {
+                ty,
+                base: value,
+                branches,
+            });
+        }
+
         if self.peek_name("Sigma") {
             self.index += 1;
             let (parameter, domain) = self.binder()?;

@@ -191,8 +191,8 @@ def eta (A : Type) (x : A) (y : A) (p : x == y) : x == y =
 ```
 
 See `examples/systems-surface.kamo` for total systems and systems local to
-composition faces. Glue syntax remains future work; dependent pairs and projections below
-provide the kernel's equivalence witnesses.
+composition faces. Dependent pairs and projections below provide the equivalence
+witnesses used by Glue.
 
 Dependent pairs use `Sigma (x : A) => B`, where `x` binds a term variable
 in `B`. Pair values are `(a, b)`; they require an expected Sigma type. The
@@ -217,6 +217,34 @@ use a typed definition. The new syntax lowers to existing `Sigma`, `Pair`,
 `Fst`, and `Snd` terms. `examples/pairs-surface.kamo` includes dependent
 packages, proofs about first components, and the kernel's `Fiber`, `Contr`,
 `Equiv`, and identity-equivalence witness entirely in surface syntax.
+
+Glue types use `Glue B { face => (A, equivalence); ... }`. On each face,
+`A` is a type in the same universe as `B`, and the witness has the kernel's
+existing equivalence type from `A` to `B`: a function with contractible fibers.
+The elaborator supplies that type for inline pair/lambda witnesses; no specially
+named library definition is required. Glue data must agree on overlaps, but
+faces need not cover the whole context.
+
+`glue G base { face => value; ... }` constructs an element of the explicit
+Glue type `G`. Its elements must cover exactly the Glue domain in the current
+context, agree on overlaps, and map to `base` under each equivalence's function.
+Faces outside the Glue domain are rejected. `unglue G value` projects to the
+base type. `G` may be an explicit Glue expression or a named type family exposed
+by the existing bounded unfolding. Function and pair elements should use the
+same faces as the corresponding type data to receive their expected types.
+All arguments before braces are postfix expressions; parenthesize compound
+applications, lambdas, and types. Glue forms introduce no new dimension binders.
+
+```text
+def ua (A : Type) (B : Type) (e : Equiv A B) : A == B =
+  path i => Glue B { i = 0 => (A, e); i = 1 => (B, idEquiv B) }
+```
+
+`examples/glue-surface.kamo` defines the equivalence library, constructs this
+map from equivalences to type paths, computes identity transport, and exercises
+`glue`/`unglue` with full and empty domains. This example does not prove the
+full univalence theorem. Glue terms lower to existing `Glue`, `GlueIntro`, and
+`Unglue`; universe, equivalence, coverage, and coherence checks stay in the kernel.
 
 ## Current implementation
 
@@ -249,6 +277,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - transport along dimension-indexed type families with `coe`;
 - heterogeneous composition with `com` and Cartesian face conditions;
 - total compatible face systems with `system`;
+- Glue types, element introduction, and projection (`Glue`, `glue`, `unglue`);
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - expected-type-directed matches, including dependent constructor refinement
@@ -264,7 +293,7 @@ not accepted.
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
 to the importing module. Nested patterns, general match-result inference,
-Glue surface syntax, and general higher inductive types are not implemented.
+and general higher inductive types are not implemented.
 
 ## Universes
 
@@ -473,7 +502,7 @@ Next milestones:
 - [x] cubical composition and face conditions (`com`, `=`, `&&`, `||`);
 - [x] standalone compatible face systems (`system`);
 - [x] surface dependent pairs and projections for equivalence witnesses;
-- [ ] Glue surface syntax;
+- [x] Glue surface syntax (`Glue`, `glue`, `unglue`);
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate

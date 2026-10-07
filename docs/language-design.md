@@ -31,6 +31,7 @@ The current system already has:
   conjunction, and disjunction, checked by the existing core;
 - standalone compatible systems with contextual coverage and overlap checks;
 - dependent pairs (`Sigma`), pair values, and projections (`fst`, `snd`);
+- surface Glue types, introduction, and projection with existing kernel checks;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -175,8 +176,7 @@ inside a composition tube can use that tube's face restriction; endpoint faces
 alone do not cover a generic Cartesian dimension. Empty systems require an
 inconsistent context. See `examples/systems-surface.kamo`.
 
-General path-abstraction inference and readable surface syntax for Glue remain
-future work. Dependent pairs are now available as `Sigma (x : A) => B`, with pair values
+General path-abstraction inference remains future work. Dependent pairs are now available as `Sigma (x : A) => B`, with pair values
 `(a, b)` and projections `fst` and `snd`. The second component checks against
 `B[a/x]` with the first component's known type retained for elaboration of
 uninferable terms such as lambdas. Projections synthesize the domain and the
@@ -185,7 +185,20 @@ binders and exposed by bounded unfolding and beta reduction. The kernel retains
 all universe, conversion, and dependent-pair computation checks. Pair values
 require expected Sigma types; unannotated pair inference is deferred.
 `examples/pairs-surface.kamo` constructs an identity equivalence witness,
-preparing the next Glue surface milestone. Only endpoints and bound names are dimensions: there is no
+providing the witnesses used by surface Glue.
+
+Glue uses `Glue B { face => (A, equivalence); ... }`, with introduction
+`glue G base { face => value; ... }` and projection `unglue G value`.
+The elaborator supplies the kernel's map-with-contractible-fibers type for
+witnesses and known face-specific types for elements, then lowers directly to
+existing core terms. No library name is privileged. Type data need not cover
+all faces; elements must cover the Glue domain, remain inside it, and have
+compatible images and overlaps. Named Glue families use bounded unfolding,
+with their faces preserved during core-to-surface reconstruction.
+`examples/glue-surface.kamo` constructs the map from equivalences to paths and
+verifies identity transport; it does not establish the full univalence theorem.
+
+Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
 work.

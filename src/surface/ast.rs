@@ -61,6 +61,19 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    Glue {
+        base: Box<Expr>,
+        branches: Vec<(Face, Expr, Expr)>,
+    },
+    GlueIntro {
+        ty: Box<Expr>,
+        base: Box<Expr>,
+        branches: Vec<(Face, Expr)>,
+    },
+    Unglue {
+        ty: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// Internal type annotation used when dependent substitution needs a checked value.
     Annotation {
         value: Box<Expr>,
