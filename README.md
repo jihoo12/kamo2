@@ -94,8 +94,26 @@ lambdas, application, `let`, `data`, `module`, and `import`. `Bool`, `Nat`, and
 syntax. Path notation additionally supports `x == y`, `path i => t`, and
 `p @ i` (also `p @ 0` and `p @ 1`). Equality infers its family from the left
 endpoint and the kernel checks both endpoints against that constant family.
-Path abstractions use expected types; general path-abstraction inference and
-explicit dimension-dependent path families are not surface features yet.
+Path abstractions use expected types; general path-abstraction inference is
+not available yet. Explicit dependent paths use `PathP (i => A) left right`,
+where only the type family `A` binds `i`. The endpoints have types `A[0/i]`
+and `A[1/i]`, respectively. A term `p @ r` of this path type has type `A[r/i]`.
+The abstraction `path j => body` checks its body at `A[j/i]`, including
+expected-type-directed lambdas and matches. Constant families convert to the
+ordinary homogeneous equality `==`.
+
+```text
+def transportPath (A : Type) (B : Type) (p : A == B) (x : A) :
+  PathP (i => p @ i) x (coe (i => p @ i) 0 1 x) =
+  path j => coe (i => p @ i) 0 j x
+```
+
+`PathP` is atomic; parenthesize compound endpoints such as function applications,
+lambdas, and matches. Each endpoint includes postfix `@`, and the family binder
+does not scope over either endpoint. These paths lower to the existing core
+`Path`; no new kernel rules are introduced. Inductive constructor metadata
+retains its existing restrictions: families containing dimension application
+(such as `p @ i`) are not supported inside constructor argument types yet.
 
 Precedence, from tightest to loosest, is postfix `@`, ordinary application,
 non-associative `==`, then right-associative `->`. Thus `f x == g y` compares
@@ -152,6 +170,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - dependent and non-dependent function types, lambdas, and application;
 - `let` expressions;
 - homogeneous path equality, path abstraction, and dimension application;
+- explicit dependent path types with `PathP`;
 - transport along dimension-indexed type families with `coe`;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
@@ -373,6 +392,7 @@ Next milestones:
 
 - [ ] broader dependent pattern matching (index equations and nested patterns);
 - [x] cubical transport surface syntax (`coe`);
+- [x] explicit dependent path surface syntax (`PathP`);
 - [ ] further cubical surface syntax (composition, faces, and Glue);
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 

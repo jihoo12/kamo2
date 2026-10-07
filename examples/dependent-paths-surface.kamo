@@ -1,0 +1,15 @@
+# A path whose type varies along a cubical equality between types.
+def transport (A : Type) (B : Type) (p : A == B) (x : A) : B =
+  coe (i => p @ i) 0 1 x
+
+def transportPath (A : Type) (B : Type) (p : A == B) (x : A) :
+  PathP (i => p @ i) x (transport A B p x) =
+  path j => coe (i => p @ i) 0 j x
+
+def ids (A : Type) (B : Type) (p : A == B) :
+  PathP (i => p @ i -> p @ i) (\x => x) (\x => x) =
+  path j => \x => x
+
+def refl : Bool == Bool = path i => Bool
+def left : Bool = (transportPath Bool Bool refl true) @ 0
+def right : Bool = (transportPath Bool Bool refl true) @ 1

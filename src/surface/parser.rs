@@ -380,6 +380,7 @@ impl Parser {
                     name.as_str(),
                     "path"
                         | "coe"
+                        | "PathP"
                         | "def"
                         | "let"
                         | "match"
@@ -430,6 +431,27 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("PathP") {
+            self.index += 1;
+            self.expect(TokenKind::LParen, "expected '(i => family)' after PathP")?;
+            let Dimension::Name(dimension) = self.dimension()? else {
+                return Err(Error::at(
+                    self.offset(),
+                    "PathP binder must be a dimension name",
+                ));
+            };
+            self.expect(TokenKind::FatArrow, "expected '=>' after PathP dimension")?;
+            let family = self.expr()?;
+            self.expect(TokenKind::RParen, "expected ')' after PathP family")?;
+            let left = self.postfix()?;
+            let right = self.postfix()?;
+            return Ok(Expr::PathP {
+                dimension,
+                family: Box::new(family),
+                left: Box::new(left),
+                right: Box::new(right),
+            });
+        }
         if self.peek_name("coe") {
             self.index += 1;
             self.expect(TokenKind::LParen, "expected '(i => family)' after coe")?;

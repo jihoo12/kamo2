@@ -61,6 +61,13 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// A dependent path; the dimension binds only the family.
+    PathP {
+        dimension: String,
+        family: Box<Expr>,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     /// Transport in a dimension-indexed type family. Only `family` binds the dimension.
     Coe {
         dimension: String,

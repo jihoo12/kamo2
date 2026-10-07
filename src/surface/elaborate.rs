@@ -582,6 +582,24 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::PathP {
+                dimension,
+                family,
+                left,
+                right,
+            } => {
+                let fresh = self.fresh_name();
+                let mut family = (**family).clone();
+                rename_dimension(&mut family, dimension, &fresh);
+                self.dims.push(fresh.clone());
+                let family_term = self.term(&family);
+                self.dims.pop();
+                let left_ty = instantiate_dimension(&family, &fresh, &Dimension::Zero);
+                let right_ty = instantiate_dimension(&family, &fresh, &Dimension::One);
+                let left = self.term_expected(left, Some(&left_ty))?;
+                let right = self.term_expected(right, Some(&right_ty))?;
+                Term::Path(family_term?, left, right)
+            }
             Expr::Coe {
                 dimension,
                 family,
@@ -668,14 +686,21 @@ impl Elaborator {
                 Term::Path(family?, left, right)
             }
             Expr::PathLambda { dimension, body } => {
+                let fresh = self.fresh_name();
                 let body_expected = match expected {
                     Some(Expr::Equality { left, .. }) => Some(self.infer(left)?),
+                    Some(Expr::PathP {
+                        dimension, family, ..
+                    }) => Some(instantiate_dimension(
+                        family,
+                        dimension,
+                        &Dimension::Name(fresh.clone()),
+                    )),
                     _ => None,
                 };
                 // Canonicalize the bound dimension before storing local types.
                 // A later path binder with the same source name must not capture
                 // references to this dimension in those types or expectations.
-                let fresh = self.fresh_name();
                 let mut body = (**body).clone();
                 rename_dimension(&mut body, dimension, &fresh);
                 self.dims.push(fresh);
@@ -896,11 +921,18 @@ impl Elaborator {
             Term::Constructor(id) => {
                 Ok(Expr::Name(self.core.constructors[id.index()].name.clone()))
             }
-            // Only homogeneous equality is emitted by this surface layer.
-            Term::Path(_, left, right) => Ok(Expr::Equality {
-                left: Box::new(self.surface_expr_in(left, env)?),
-                right: Box::new(self.surface_expr_in(right, env)?),
-            }),
+            Term::Path(family, left, right) => {
+                let dimension = self.fresh_name();
+                self.dims.push(dimension.clone());
+                let family = self.surface_expr_in(family, env);
+                self.dims.pop();
+                Ok(Expr::PathP {
+                    dimension,
+                    family: Box::new(family?),
+                    left: Box::new(self.surface_expr_in(left, env)?),
+                    right: Box::new(self.surface_expr_in(right, env)?),
+                })
+            }
             Term::PApp(path, dimension) => Ok(Expr::PathApply {
                 path: Box::new(self.surface_expr_in(path, env)?),
                 dimension: self.surface_dimension(dimension)?,
@@ -1018,6 +1050,17 @@ impl Elaborator {
             return self.infer(&Expr::Name(ih));
         }
         match expr {
+            Expr::PathP {
+                dimension, family, ..
+            } => {
+                let fresh = self.fresh_name();
+                let mut family = (**family).clone();
+                rename_dimension(&mut family, dimension, &fresh);
+                self.dims.push(fresh);
+                let sort = self.infer(&family);
+                self.dims.pop();
+                Ok(Expr::Universe(universe_level(&sort?)?))
+            }
             Expr::Coe {
                 dimension,
                 family,
@@ -1046,9 +1089,12 @@ impl Elaborator {
                 self.dimension(dimension)?;
                 match self.infer(path)? {
                     Expr::Equality { left, .. } => self.infer(&left),
-                    _ => Err(Error::plain(
-                        "path application expects a known homogeneous path type",
-                    )),
+                    Expr::PathP {
+                        dimension: binder,
+                        family,
+                        ..
+                    } => Ok(instantiate_dimension(&family, &binder, dimension)),
+                    _ => Err(Error::plain("path application expects a known path type")),
                 }
             }
             Expr::PathLambda { .. } => Err(Error::plain(
@@ -1175,6 +1221,18 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::PathP {
+            dimension,
+            family,
+            left,
+            right,
+        } => {
+            if dimension != old {
+                replace_dimension(family, old, new);
+            }
+            replace_dimension(left, old, new);
+            replace_dimension(right, old, new);
+        }
         Expr::Coe {
             dimension,
             family,
@@ -1252,6 +1310,17 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::PathP {
+            dimension,
+            family,
+            left,
+            right,
+        } => Expr::PathP {
+            dimension: dimension.clone(),
+            family: Box::new(substitute(family, name, replacement)),
+            left: Box::new(substitute(left, name, replacement)),
+            right: Box::new(substitute(right, name, replacement)),
+        },
         Expr::Coe {
             dimension,
             family,

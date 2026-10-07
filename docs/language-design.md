@@ -25,6 +25,8 @@ The current system already has:
   dimension application (`@`), elaborated to existing core paths;
 - surface transport `coe (i => A) r s value`, lowered to existing core
   composition with no tubes and checked at the source and destination types;
+- explicit dependent paths `PathP (i => A) left right`, with endpoint-directed
+  checking, type-family instantiation for `@`, and existing core `Path` lowering;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -140,8 +142,17 @@ In particular, neutral type lines are not treated as constant just because
 their endpoints agree. See `examples/transport-surface.kamo` for a runnable
 example and the README for argument precedence.
 
-General path-abstraction inference, explicit dimension-dependent path families,
-and readable surface syntax for `com`, face formulas/systems, and Glue
+Explicit dependent paths use `PathP (i => A) left right`. The family alone
+binds `i`; endpoints are checked at `A[0/i]` and `A[1/i]`. A path abstraction
+checks its body at the family instantiated with its own dimension, and path
+application synthesizes the family at the supplied dimension. Core-to-surface
+metadata reconstruction preserves the family instead of assuming homogeneity.
+The kernel's existing metadata restrictions still reject dimension application
+inside inductive constructor argument types. See
+`examples/dependent-paths-surface.kamo` for paths built from transport and a
+varying family of identity functions.
+
+General path-abstraction inference and readable surface syntax for `com`, face formulas/systems, and Glue
 remain future work. Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
