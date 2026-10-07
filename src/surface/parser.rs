@@ -386,6 +386,7 @@ impl Parser {
                     "path"
                         | "coe"
                         | "com"
+                        | "system"
                         | "PathP"
                         | "def"
                         | "let"
@@ -470,6 +471,26 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.peek_name("system") {
+            self.index += 1;
+            let ty = self.postfix()?;
+            self.expect(TokenKind::LBrace, "expected '{' before system branches")?;
+            let mut branches = Vec::new();
+            while !self.eat(&TokenKind::RBrace) {
+                let face = self.face()?;
+                self.expect(TokenKind::FatArrow, "expected '=>' after system face")?;
+                branches.push((face, self.expr()?));
+                if self.eat(&TokenKind::RBrace) {
+                    break;
+                }
+                self.expect(TokenKind::Semicolon, "expected ';' between system branches")?;
+            }
+            return Ok(Expr::System {
+                ty: Box::new(ty),
+                branches,
+            });
+        }
+
         if self.peek_name("com") {
             self.index += 1;
             self.expect(TokenKind::LParen, "expected '(i => family)' after com")?;

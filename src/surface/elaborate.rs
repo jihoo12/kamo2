@@ -592,6 +592,15 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::System { ty, branches } => {
+                let ty_term = self.term(ty)?;
+                let branches = branches
+                    .iter()
+                    .map(|(face, body)| Ok((self.face(face)?, self.term_expected(body, Some(ty))?)))
+                    .collect::<Result<Vec<_>>>()?;
+                Term::System(ty_term, branches)
+            }
+
             Expr::Com {
                 dimension,
                 family,
@@ -1105,6 +1114,7 @@ impl Elaborator {
             return self.infer(&Expr::Name(ih));
         }
         match expr {
+            Expr::System { ty, .. } => Ok((**ty).clone()),
             Expr::PathP {
                 dimension, family, ..
             } => {
@@ -1283,6 +1293,14 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::System { ty, branches } => {
+            replace_dimension(ty, old, new);
+            for (face, body) in branches {
+                replace_face(face, old, new);
+                replace_dimension(body, old, new);
+            }
+        }
+
         Expr::Com {
             dimension,
             family,
@@ -1395,6 +1413,14 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::System { ty, branches } => Expr::System {
+            ty: Box::new(substitute(ty, name, replacement)),
+            branches: branches
+                .iter()
+                .map(|(face, body)| (face.clone(), substitute(body, name, replacement)))
+                .collect(),
+        },
+
         Expr::Com {
             dimension,
             family,

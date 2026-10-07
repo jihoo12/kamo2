@@ -29,6 +29,7 @@ The current system already has:
   checking, type-family instantiation for `@`, and existing core `Path` lowering;
 - surface composition with scoped tubes and Cartesian face equalities,
   conjunction, and disjunction, checked by the existing core;
+- standalone compatible systems with contextual coverage and overlap checks;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -165,8 +166,17 @@ No coverage requirement is added for composition tubes. The Cartesian path
 concatenation and inverse examples in `examples/composition-surface.kamo` require
 neither interval connections nor reversal.
 
-General path-abstraction inference and readable surface syntax for standalone
-systems and Glue remain future work. Only endpoints and bound names are dimensions: there is no
+Standalone compatible systems use `system A { face => value; ... }`. Branch
+bodies receive the annotated type as their expected type, and lowering uses
+existing core `System` terms. There is no new dimension binder. The kernel
+checks agreement on overlaps and coverage of the current face context. A system
+inside a composition tube can use that tube's face restriction; endpoint faces
+alone do not cover a generic Cartesian dimension. Empty systems require an
+inconsistent context. See `examples/systems-surface.kamo`.
+
+General path-abstraction inference and readable surface syntax for Glue remain
+future work. Surface dependent pairs and projections should precede Glue so
+programs can construct its existing equivalence witnesses. Only endpoints and bound names are dimensions: there is no
 surface or core interval meet, join, or reversal. The scoped Circle higher
 constructor described below is now implemented; broader HIT syntax remains later
 work.

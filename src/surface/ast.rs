@@ -61,6 +61,11 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// A compatible face system covering the current face context.
+    System {
+        ty: Box<Expr>,
+        branches: Vec<(Face, Expr)>,
+    },
     /// The dimension binds the family and tube bodies, but not faces or cap.
     Com {
         dimension: String,

@@ -168,8 +168,31 @@ but not unparenthesized application. Tube bodies accept full expressions;
 separate tubes with semicolons (a trailing semicolon is accepted). The face
 is resolved in the surrounding dimension scope even if the composition binder
 has the same spelling. See `examples/composition-surface.kamo` for path
-concatenation and inversion. Standalone face systems and Glue syntax remain
-future work.
+concatenation and inversion.
+
+Standalone compatible systems use `system A { face => value; ... }`. The type
+argument includes postfix `@`; parenthesize compound types such as `A -> B`.
+Each branch is checked at `A` under its face, including expected-type-directed
+lambdas, paths, and matches. There is no additional dimension binder. Branches
+must agree on overlaps and their faces must cover the current face context.
+Unlike composition tubes, a system cannot leave the current context uncovered.
+In particular, `i = 0 || i = 1` does not cover a generic Cartesian dimension.
+Inside a composition tube, the enclosing face can justify a system that would
+not cover the unrestricted context. Empty systems are accepted only under an
+inconsistent face context. Faces use the same syntax and precedence as `com`.
+
+```text
+def eta (A : Type) (x : A) (y : A) (p : x == y) : x == y =
+  path i => system A {
+    i = 0 => x;
+    i = 1 => y;
+    top => p @ i
+  }
+```
+
+See `examples/systems-surface.kamo` for total systems and systems local to
+composition faces. Glue syntax remains future work; surface dependent pairs
+and projections are needed to construct the kernel's equivalence witnesses.
 
 ## Current implementation
 
@@ -200,6 +223,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - explicit dependent path types with `PathP`;
 - transport along dimension-indexed type families with `coe`;
 - heterogeneous composition with `com` and Cartesian face conditions;
+- total compatible face systems with `system`;
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
 - expected-type-directed matches, including dependent constructor refinement
@@ -215,7 +239,7 @@ not accepted.
 The `check-surface` and `normalize-surface` CLI modes load transitive file
 imports. An import such as `import Data.Vec` resolves `Data/Vec.kamo` relative
 to the importing module. Nested patterns, general match-result inference,
-standalone system/Glue surface syntax, and general higher inductive types are not implemented.
+Glue surface syntax, and general higher inductive types are not implemented.
 
 ## Universes
 
@@ -422,7 +446,9 @@ Next milestones:
 - [x] cubical transport surface syntax (`coe`);
 - [x] explicit dependent path surface syntax (`PathP`);
 - [x] cubical composition and face conditions (`com`, `=`, `&&`, `||`);
-- [ ] further cubical surface syntax (standalone systems and Glue);
+- [x] standalone compatible face systems (`system`);
+- [ ] surface dependent pairs and projections for equivalence witnesses;
+- [ ] Glue surface syntax;
 - [ ] generalize HIT declarations beyond the scoped Circle fragment.
 
 Near-term work intentionally avoids unrestricted general recursion, a separate
