@@ -61,6 +61,13 @@ pub enum Dimension {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Expr {
+    /// Explicit elimination motive: index binders followed by the scrutinee binder.
+    MatchReturn {
+        scrutinee: Box<Expr>,
+        binders: Vec<String>,
+        result: Box<Expr>,
+        branches: Vec<MatchBranch>,
+    },
     Glue {
         base: Box<Expr>,
         branches: Vec<(Face, Expr, Expr)>,

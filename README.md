@@ -280,7 +280,7 @@ The library API also exposes `CheckedProgram::check_surface` and
 - Glue types, element introduction, and projection (`Glue`, `glue`, `unglue`);
 - surface declarations for parameterized and indexed inductive families;
 - exhaustive constructor patterns for a single inductive family;
-- expected-type-directed matches, including dependent constructor refinement
+- explicit `return` motives and expected-type-directed matches, including dependent constructor refinement
   for ordinary indexed families, lowered to the core dependent eliminator;
 - structural recursive calls lowered to the corresponding eliminator
   hypotheses.
@@ -348,10 +348,39 @@ instantiate that motive in each branch; recursive arguments receive hypotheses
 at their own indices and values. For example, structural copy of `Vec A n` can
 return `Vec A n`, using the tail hypothesis at its smaller length.
 
-This is a conservative subset of dependent pattern matching: compound or repeated
-indices are left fixed, with no equation solving or impossible-branch pruning.
+Automatic motive synthesis is a conservative subset of dependent pattern
+matching: compound or repeated indices are left fixed, with no equation solving or impossible-branch pruning.
 Other local hypotheses are not generalized or rewritten. Matches still require
 an expected result type and exhaustive flat constructor patterns.
+
+An explicit elimination motive can be supplied with
+`match value return (index1, ..., scrutinee => resultType) { ... }`.
+Binders correspond to the family's indices in declaration order, then its
+matched value; parameters remain fixed. For an unindexed type such as Nat,
+only the value binder is supplied. Binders are distinct and scope over the
+result type only, not the scrutinee or branches. Their dependent types come
+from the family's checked metadata.
+
+```text
+def copySuccessor (A : Type) (n : Nat) (xs : Vec A (suc n)) : Vec A (suc n) =
+  match xs return (length, value => Vec A length) {
+    nil => nil A;
+    cons k head tail => cons A k head tail
+  }
+```
+
+Unlike automatic motive synthesis, this form can generalize compound and
+repeated indices and expression scrutinees. Branches are checked against the
+motive applied to each constructor's indices and value; recursive calls use
+induction hypotheses at the recursive child's indices. The kernel checks that
+the eliminator's result at the actual input matches the enclosing expected
+type. All constructors still require branches: this does not solve index
+equations or prune impossible cases. Flat constructor patterns and an expected
+result type remain required; unannotated match inference is deferred.
+
+Constructor applications now synthesize their full dependent function/result
+types from metadata, supporting typed inference for `let xs = cons ...` and
+matching constructor expressions directly. See `examples/match-motives-surface.kamo`.
 
 ## Higher inductive types
 
@@ -490,6 +519,7 @@ Completed foundations:
 - [x] surface `data` declarations for ordinary and indexed families;
 - [x] non-dependent pattern matching and structural recursion lowering;
 - [x] expected-type-directed dependent constructor refinement for ordinary indexed families;
+- [x] explicit match motives for compound/repeated indices and expression scrutinees;
 - [x] homogeneous cubical surface paths (`==`, `path`, `@`);
 - [x] gated Circle HIT elimination and scoped composition;
 - [x] scoped surface `data Circle` and higher path-constructor elaboration.

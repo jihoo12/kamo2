@@ -32,6 +32,7 @@ The current system already has:
 - standalone compatible systems with contextual coverage and overlap checks;
 - dependent pairs (`Sigma`), pair values, and projections (`fst`, `snd`);
 - surface Glue types, introduction, and projection with existing kernel checks;
+- explicit elimination motives and full constructor-application type synthesis;
 - cumulative explicit universes;
 - the Cartesian cubical core: paths, composition/coercion, systems, and Glue.
 
@@ -108,11 +109,25 @@ binders. Each branch uses the constructor's result indices and constructed value
 each recursive hypothesis uses its argument's own indices and value. The result
 is an existing checked generic eliminator, with no new kernel matching rule.
 
-This does not implement full dependent pattern matching. Compound or repeated
+Automatic synthesis does not implement full dependent pattern matching. Compound or repeated
 indices remain fixed; there is no index-equation solving, impossible-branch
 pruning, or generalization of other dependent local hypotheses. Flat exhaustive
 patterns and an expected result type are still required. Nested patterns and
 general match-result inference remain future work.
+
+Explicit motives use `match value return (indices..., scrutinee => resultType)`
+before the branch block. Index binders are ordered as in the family's metadata,
+followed by one value binder. Parameters remain fixed. Binders are distinct,
+have metadata-derived dependent types, and scope only over the result type.
+The motive is lowered to the same kernel eliminator as automatic matches;
+constructor branches and recursive hypotheses instantiate it at their own
+indices and values. Compound and repeated indices and non-variable scrutinees
+can be generalized explicitly. Expected result types and exhaustive flat
+patterns are still required; equation solving, impossible-branch pruning, and
+unannotated match-result inference remain deferred. Constructor applications
+now synthesize their full dependent types from checked metadata, enabling
+inference for let-bound constructors and expression scrutinees.
+See `examples/match-motives-surface.kamo`.
 
 ### Cubical surface syntax
 

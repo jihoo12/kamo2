@@ -397,6 +397,7 @@ impl Elaborator {
         scrutinee: &Expr,
         branches: &[super::ast::MatchBranch],
         expected: &Expr,
+        explicit: Option<(&[String], &Expr)>,
     ) -> Result<TermId> {
         let inductive = self.validate_constructor_branches(branches)?;
         let scrutinee_ty = self.infer(scrutinee)?;
@@ -448,7 +449,27 @@ impl Elaborator {
                 }
             }
         }
-        let result = self.surface_expr_in(expected_term, &result_env)?;
+        let result = match explicit {
+            Some((binders, result)) => {
+                if binders.len() != motive_names.len() {
+                    return Err(Error::plain(format!(
+                        "match motive expects {} binders (indices followed by scrutinee), found {}",
+                        motive_names.len(),
+                        binders.len()
+                    )));
+                }
+                let mut seen = HashSet::new();
+                let mut result = result.clone();
+                for (binder, fresh) in binders.iter().zip(&motive_names) {
+                    if !seen.insert(binder) {
+                        return Err(Error::plain("duplicate match motive binder"));
+                    }
+                    result = substitute(&result, binder, &Expr::Name(fresh.clone()));
+                }
+                result
+            }
+            None => self.surface_expr_in(expected_term, &result_env)?,
+        };
         let saved = self.locals.len();
         let mut telescope = parameter_exprs.clone();
         for (entry, name) in declaration.indices.iter().zip(&motive_names) {
@@ -460,8 +481,17 @@ impl Elaborator {
         self.locals
             .push((motive_names.last().unwrap().clone(), value_type));
         let motive_body = self.term(&result);
+        let canonical = motive_body.and_then(|body| {
+            let env = self
+                .locals
+                .iter()
+                .map(|(name, _)| Expr::Name(name.clone()))
+                .collect::<Vec<_>>();
+            Ok((body, self.surface_expr_in(body, &env)?))
+        });
         self.locals.truncate(saved);
-        let motive = self.lambda_n(motive_body?, motive_names.len());
+        let (motive_body, result) = canonical?;
+        let motive = self.lambda_n(motive_body, motive_names.len());
 
         let mut methods = Vec::with_capacity(declaration.constructors.ordinary()?.len());
         for constructor_id in declaration.constructors.ordinary()? {
@@ -592,6 +622,18 @@ impl Elaborator {
 
     fn term_expected(&mut self, expr: &Expr, expected: Option<&Expr>) -> Result<TermId> {
         let term = match expr {
+            Expr::MatchReturn {
+                scrutinee,
+                binders,
+                result,
+                branches,
+            } => {
+                let expected = expected.ok_or_else(|| {
+                    Error::plain("explicit match currently requires an expected result type")
+                })?;
+                return self.lower_match(scrutinee, branches, expected, Some((binders, result)));
+            }
+
             Expr::Glue { base, branches } => {
                 let base_term = self.term(base)?;
                 let mut data = Vec::new();
@@ -967,7 +1009,7 @@ impl Elaborator {
             } => {
                 let expected = expected
                     .ok_or_else(|| Error::plain("cannot infer surface match result type yet"))?;
-                return self.lower_match(scrutinee, branches, expected);
+                return self.lower_match(scrutinee, branches, expected, None);
             }
         };
         Ok(self.core.alloc(term, 0))
@@ -994,14 +1036,29 @@ impl Elaborator {
         if let Ok(constructor) = self.resolve_point_constructor(name) {
             let constructor = self.core.constructors[constructor.index()].clone();
             let family = self.core.inductives[constructor.inductive.index()].clone();
-            if family.parameters.is_empty()
-                && family.indices.is_empty()
-                && constructor.arguments.is_empty()
-                && constructor.result_indices.is_empty()
-            {
-                return Ok(Expr::Name(family.name));
+            let mut env = Vec::new();
+            let mut binders = Vec::new();
+            for entry in family.parameters.iter().chain(&constructor.arguments) {
+                let ty = self.surface_expr_in(entry.ty, &env)?;
+                let name = self.fresh_name();
+                env.push(Expr::Name(name.clone()));
+                binders.push((name, ty));
             }
+            let mut arguments = env[..family.parameters.len()].to_vec();
+            for index in &constructor.result_indices {
+                arguments.push(self.surface_expr_in(*index, &env)?);
+            }
+            let mut result = apply_expr(Expr::Name(family.name), arguments);
+            for (parameter, domain) in binders.into_iter().rev() {
+                result = Expr::Pi {
+                    parameter: Some(parameter),
+                    domain: Box::new(domain),
+                    codomain: Box::new(result),
+                };
+            }
+            return Ok(result);
         }
+
         if let Ok(constructor) = self.resolve_higher_constructor(name) {
             let higher = self.core.higher[constructor.index()].clone();
             let family = self.core.inductives[higher.inductive.index()].clone();
@@ -1358,7 +1415,9 @@ impl Elaborator {
                 "cannot infer an unannotated lambda in a let binding",
             )),
             Expr::If { .. } => Err(Error::plain("cannot infer surface if yet")),
-            Expr::Match { .. } => Err(Error::plain("cannot infer surface match yet")),
+            Expr::Match { .. } | Expr::MatchReturn { .. } => {
+                Err(Error::plain("cannot infer surface match yet"))
+            }
         }
     }
 
@@ -1533,6 +1592,19 @@ fn instantiate_dimension(expr: &Expr, binder: &str, value: &Dimension) -> Expr {
 
 fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
     match expr {
+        Expr::MatchReturn {
+            scrutinee,
+            result,
+            branches,
+            ..
+        } => {
+            replace_dimension(scrutinee, old, new);
+            replace_dimension(result, old, new);
+            for branch in branches {
+                replace_dimension(&mut branch.body, old, new);
+            }
+        }
+
         Expr::Glue { base, branches } => {
             replace_dimension(base, old, new);
             for (face, ty, eq) in branches {
@@ -1691,6 +1763,39 @@ fn replace_dimension(expr: &mut Expr, old: &str, new: &Dimension) {
 
 fn substitute(expr: &Expr, name: &str, replacement: &Expr) -> Expr {
     match expr {
+        Expr::MatchReturn {
+            scrutinee,
+            binders,
+            result,
+            branches,
+        } => {
+            let plain = substitute(
+                &Expr::Match {
+                    scrutinee: scrutinee.clone(),
+                    branches: branches.clone(),
+                },
+                name,
+                replacement,
+            );
+            let Expr::Match {
+                scrutinee,
+                branches,
+            } = plain
+            else {
+                unreachable!()
+            };
+            Expr::MatchReturn {
+                scrutinee,
+                branches,
+                binders: binders.clone(),
+                result: if binders.iter().any(|binder| binder == name) {
+                    result.clone()
+                } else {
+                    Box::new(substitute(result, name, replacement))
+                },
+            }
+        }
+
         Expr::Glue { base, branches } => Expr::Glue {
             base: Box::new(substitute(base, name, replacement)),
             branches: branches

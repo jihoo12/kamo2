@@ -292,6 +292,23 @@ impl Parser {
         if self.peek_name("match") {
             self.index += 1;
             let scrutinee = self.arrow()?;
+            let motive = if self.peek_name("return") {
+                self.index += 1;
+                self.expect(
+                    TokenKind::LParen,
+                    "expected '(binders => result)' after return",
+                )?;
+                let mut binders = vec![self.name()?];
+                while self.eat(&TokenKind::Comma) {
+                    binders.push(self.name()?);
+                }
+                self.expect(TokenKind::FatArrow, "expected '=>' after motive binders")?;
+                let result = self.expr()?;
+                self.expect(TokenKind::RParen, "expected ')' after match motive")?;
+                Some((binders, result))
+            } else {
+                None
+            };
             self.expect(TokenKind::LBrace, "expected '{' after match scrutinee")?;
             let mut branches = Vec::new();
             while !self.eat(&TokenKind::RBrace) {
@@ -304,9 +321,17 @@ impl Parser {
                 }
                 self.expect(TokenKind::Semicolon, "expected ';' between match branches")?;
             }
-            return Ok(Expr::Match {
-                scrutinee: Box::new(scrutinee),
-                branches,
+            return Ok(match motive {
+                Some((binders, result)) => Expr::MatchReturn {
+                    scrutinee: Box::new(scrutinee),
+                    binders,
+                    result: Box::new(result),
+                    branches,
+                },
+                None => Expr::Match {
+                    scrutinee: Box::new(scrutinee),
+                    branches,
+                },
             });
         }
         if self.peek_name("let") {
@@ -399,6 +424,7 @@ impl Parser {
                         | "def"
                         | "let"
                         | "match"
+                        | "return"
                         | "data"
                         | "where"
                         | "module"
@@ -439,7 +465,7 @@ impl Parser {
             Some(TokenKind::LParen) => true,
             Some(TokenKind::Name(name)) => !matches!(
                 name.as_str(),
-                "def" | "data" | "module" | "import" | "where" | "let" | "path"
+                "def" | "data" | "module" | "import" | "where" | "let" | "path" | "return"
             ),
             _ => false,
         }

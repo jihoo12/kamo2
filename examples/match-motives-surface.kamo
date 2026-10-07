@@ -1,0 +1,22 @@
+# Explicit motives bind each index, then the matched value.
+def copySuccessor (A : Type) (n : Nat) (xs : Vec A (suc n)) : Vec A (suc n) =
+  match xs return (length, value => Vec A length) {
+    nil => nil A;
+    cons k head tail => cons A k head tail
+  }
+
+# Structural calls use induction hypotheses at the recursive child's index.
+def copy (A : Type) (n : Nat) (xs : Vec A n) : Vec A n =
+  match xs return (length, value => Vec A length) {
+    nil => nil A;
+    cons k head tail => cons A k head (copy A k tail)
+  }
+
+def singleton : Vec Bool (suc zero) = cons Bool zero true (nil Bool)
+def result : Vec Bool (suc zero) = copySuccessor Bool zero singleton
+
+def reflNat (n : Nat) : n == n =
+  match n return (value => value == value) {
+    zero => path i => zero;
+    suc k => path i => suc k
+  }
