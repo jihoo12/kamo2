@@ -1717,6 +1717,43 @@ impl Elaborator {
             return Err(Error::plain("surface type unfolding limit exceeded"));
         }
         match expr {
+            Expr::Let { .. } => {
+                // Decode the lowered binding with fresh names before beta
+                // reduction, so a binder in the body cannot capture the value.
+                let term = self.term(expr)?;
+                let env: Vec<_> = self
+                    .locals
+                    .iter()
+                    .map(|(name, _)| Expr::Name(name.clone()))
+                    .collect();
+                let expr = self.surface_expr_in(term, &env)?;
+                let Expr::Let { name, value, body } = expr else {
+                    return Err(Error::plain("expected a lowered surface let binding"));
+                };
+                self.type_head(&substitute(&body, &name, &value), fuel - 1)
+            }
+            Expr::PathApply { path, dimension } => match self.type_head(path, fuel - 1)? {
+                path @ Expr::PathLambda { .. } => {
+                    let term = self.term(&path)?;
+                    let env: Vec<_> = self
+                        .locals
+                        .iter()
+                        .map(|(name, _)| Expr::Name(name.clone()))
+                        .collect();
+                    let Expr::PathLambda {
+                        dimension: binder,
+                        body,
+                    } = self.surface_expr_in(term, &env)?
+                    else {
+                        unreachable!("a path abstraction lowers to PLam");
+                    };
+                    self.type_head(&instantiate_dimension(&body, &binder, dimension), fuel - 1)
+                }
+                path => Ok(Expr::PathApply {
+                    path: Box::new(path),
+                    dimension: dimension.clone(),
+                }),
+            },
             Expr::Fst(pair) | Expr::Snd(pair) => match self.type_head(pair, fuel - 1)? {
                 Expr::Pair { first, second } => self.type_head(
                     if matches!(expr, Expr::Fst(_)) {

@@ -248,6 +248,14 @@ dependent type, lowering retains that codomain so applying the binding to its
 actual value can reduce the result type. Uninferable bodies still receive the
 surrounding expected type. See `examples/annotations-surface.kamo`.
 
+Type-head computation also reduces type-level `let` bindings and applications
+of known path abstractions. For example, `let f : (let A = Bool; A -> A) =
+\x => x; f true` and a function annotation `types @ 0` work when
+`types : (Bool -> Bool) == (Bool -> Bool)` is defined as `path i => Bool -> Bool`.
+Reduction uses fresh binders to preserve term and dimension scope, has the same
+bounded unfolding limit, and leaves neutral paths unreduced. The kernel checks
+the original annotation, including values discarded by these reductions.
+
 Glue types use `Glue B { face => (A, equivalence); ... }`. On each face,
 `A` is a type in the same universe as `B`, and the witness has the kernel's
 existing equivalence type from `A` to `B`: a function with contractible fibers.

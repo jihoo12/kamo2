@@ -1,0 +1,8 @@
+def localTypes : Bool =
+  let f : (let A = Bool; A -> A) = \x => x;
+  let p : (let A = Bool; Sigma (x : A) => A) = (false, f true);
+  snd p
+
+def types : (Bool -> Bool) == (Bool -> Bool) = path i => Bool -> Bool
+
+def pathType : Bool = let f : types @ 0 = \x => x; f true
