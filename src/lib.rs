@@ -243,6 +243,7 @@ impl CheckedProgram {
 
     fn check_program(program: syntax::Program, options: Options) -> Result<Self> {
         program.validate_global_references()?;
+        program.validate_scopes()?;
         program.validate_inductives()?;
         {
             let mut engine =
@@ -460,5 +461,104 @@ mod metadata_boundary_tests {
     #[test]
     fn backward_family_dependencies_and_direct_recursion_remain_valid() {
         CheckedProgram::check_surface("data Earlier : Type where { earlier : Earlier } data Later : Type where { wrap : Earlier -> Later; step : Later -> Later }").unwrap();
+    }
+}
+
+#[cfg(test)]
+mod general_scope_boundary_tests {
+    use super::*;
+    use syntax::{D, F, Term};
+    fn raw() -> syntax::Program {
+        syntax::parse("(def p (Path i Bool true true) (path i true)) (def value Bool true)")
+            .unwrap()
+    }
+    #[test]
+    fn escaped_path_dimensions_return_errors_in_both_modes() {
+        for optimized in [false, true] {
+            for index in [0, usize::MAX] {
+                let mut program = raw();
+                let path = program.alloc(Term::Global(0), 0);
+                program.decls[1].body = program.alloc(Term::PApp(path, D::Bound(index)), 0);
+                let error = CheckedProgram::check_program(
+                    program,
+                    Options {
+                        optimized,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err();
+                assert!(error.message.contains("escaped dimension"), "{error}");
+            }
+        }
+    }
+    #[test]
+    fn faces_and_composition_endpoints_do_not_bind_dimensions() {
+        for variant in 0..5 {
+            let mut program = raw();
+            let ty = program.decls[1].ty;
+            let value = program.decls[1].body;
+            let face = F::And(Box::new(F::Top), Box::new(F::Eq(D::Bound(0), D::Zero)));
+            let term = match variant {
+                0 => Term::System(ty, vec![(face, value)]),
+                1 => Term::Glue(ty, vec![(face, ty, value)]),
+                2 => Term::GlueIntro(ty, value, vec![(face, value)]),
+                3 => Term::Com {
+                    family: ty,
+                    from: D::Bound(0),
+                    to: D::One,
+                    cap: value,
+                    tubes: vec![],
+                },
+                _ => Term::Com {
+                    family: ty,
+                    from: D::Zero,
+                    to: D::One,
+                    cap: value,
+                    tubes: vec![(face, value)],
+                },
+            };
+            program.decls[1].body = program.alloc(term, 0);
+            let error = CheckedProgram::check_program(program, Options::default()).unwrap_err();
+            assert!(error.message.contains("escaped dimension"), "{error}");
+        }
+    }
+    #[test]
+    fn path_endpoints_remain_outside_the_family_binder() {
+        let mut program = raw();
+        let path = program.alloc(Term::Global(0), 0);
+        let bad_endpoint = program.alloc(Term::PApp(path, D::Bound(0)), 0);
+        program.decls[1].ty = program.alloc(
+            Term::Path(program.decls[1].ty, bad_endpoint, program.decls[1].body),
+            0,
+        );
+        assert!(
+            CheckedProgram::check_program(program, Options::default())
+                .unwrap_err()
+                .message
+                .contains("escaped dimension")
+        );
+    }
+    #[test]
+    fn shared_nodes_are_checked_at_each_scope_root() {
+        for index in [0, usize::MAX] {
+            let mut program = raw();
+            let variable = program.alloc(Term::Var(index), 0);
+            program.alloc(Term::Lam(variable), 0);
+            program.decls[1].body = variable;
+            assert!(
+                CheckedProgram::check_program(program, Options::default())
+                    .unwrap_err()
+                    .message
+                    .contains("escaped term")
+            );
+        }
+    }
+    #[test]
+    fn bound_dimensions_and_terms_remain_valid() {
+        CheckedProgram::check("(def p (Path i Bool true true) (path i true)) (def eta (Path i Bool true true) (path i (at p i))) (def id (Pi x Bool Bool) (lam x x))").unwrap();
+        CheckedProgram::check_surface(
+            "def id (A : Type) (x : A) : A = x def p (x : Bool) : x == x = path i => x",
+        )
+        .unwrap();
     }
 }

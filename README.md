@@ -658,3 +658,7 @@ kernel entry. Family metadata may depend only on its own or earlier families;
 mutual inductives are unsupported. Surface definition/data headers allow at
 most 64 parameters, and the combined parsed/generated AST depth is limited to
 128 before elaboration.
+
+Kernel entry also checks term and dimension scopes independently before semantic
+checking, including dimensions in faces. Closed declaration roots and metadata
+telescopes are validated even when syntax nodes are shared across scopes.

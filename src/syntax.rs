@@ -354,6 +354,203 @@ impl Program {
         Ok(())
     }
 
+    /// Compute free-variable requirements bottom-up in the validated syntax DAG.
+    /// Term and dimension binders are independent; faces never bind dimensions.
+    pub(crate) fn validate_scopes(&self) -> Result<()> {
+        fn dimension(d: D) -> Result<usize> {
+            match d {
+                D::Bound(index) => index
+                    .checked_add(1)
+                    .ok_or_else(|| Error::plain("escaped dimension variable")),
+                D::Zero | D::One => Ok(0),
+            }
+        }
+        fn face(root: &F) -> Result<usize> {
+            let mut needed = 0;
+            let mut pending = vec![root];
+            while let Some(face) = pending.pop() {
+                match face {
+                    F::Eq(a, b) => needed = needed.max(dimension(*a)?).max(dimension(*b)?),
+                    F::And(a, b) | F::Or(a, b) => pending.extend([a.as_ref(), b.as_ref()]),
+                    F::Top | F::Bot => {}
+                }
+            }
+            Ok(needed)
+        }
+        let mut scopes: Vec<(usize, usize)> = Vec::with_capacity(self.terms.len());
+        for position in 0..self.terms.len() {
+            let mut terms = 0usize;
+            let mut dimensions = 0usize;
+            let mut children = Vec::new();
+            match &self.terms.get(TermId::new(position)).term {
+                Term::Var(index) => {
+                    terms = index
+                        .checked_add(1)
+                        .ok_or_else(|| Error::plain("escaped term variable"))?
+                }
+                Term::Lam(body) => children.push((*body, 1, 0)),
+                Term::Pi(domain, codomain) | Term::Sigma(domain, codomain) => {
+                    children.extend([(*domain, 0, 0), (*codomain, 1, 0)])
+                }
+                Term::PLam(body) => children.push((*body, 0, 1)),
+                Term::Path(family, left, right) => {
+                    children.extend([(*family, 0, 1), (*left, 0, 0), (*right, 0, 0)])
+                }
+                Term::PApp(path, d) => {
+                    children.push((*path, 0, 0));
+                    dimensions = dimension(*d)?;
+                }
+                Term::App(a, b) | Term::Pair(a, b) | Term::Ann(a, b) | Term::Unglue(a, b) => {
+                    children.extend([(*a, 0, 0), (*b, 0, 0)])
+                }
+                Term::Fst(a) | Term::Snd(a) | Term::Suc(a) => children.push((*a, 0, 0)),
+                Term::If(a, b, c, d) | Term::NatElim(a, b, c, d) => {
+                    children.extend([(*a, 0, 0), (*b, 0, 0), (*c, 0, 0), (*d, 0, 0)])
+                }
+                Term::HigherApp {
+                    parameters,
+                    arguments,
+                    dimensions: ds,
+                    ..
+                } => {
+                    children.extend(parameters.iter().chain(arguments).map(|t| (*t, 0, 0)));
+                    for d in ds {
+                        dimensions = dimensions.max(dimension(*d)?);
+                    }
+                }
+                Term::Elim {
+                    parameters,
+                    motive,
+                    methods,
+                    indices,
+                    scrutinee,
+                    ..
+                }
+                | Term::HitElim {
+                    parameters,
+                    motive,
+                    methods,
+                    indices,
+                    scrutinee,
+                    ..
+                } => {
+                    children.extend(
+                        parameters
+                            .iter()
+                            .chain(methods)
+                            .chain(indices)
+                            .map(|t| (*t, 0, 0)),
+                    );
+                    children.extend([(*motive, 0, 0), (*scrutinee, 0, 0)]);
+                }
+                Term::Com {
+                    family,
+                    from,
+                    to,
+                    cap,
+                    tubes,
+                } => {
+                    children.extend([(*family, 0, 1), (*cap, 0, 0)]);
+                    dimensions = dimension(*from)?.max(dimension(*to)?);
+                    for (f, body) in tubes {
+                        dimensions = dimensions.max(face(f)?);
+                        children.push((*body, 0, 1));
+                    }
+                }
+                Term::System(ty, branches) | Term::GlueIntro(ty, _, branches) => {
+                    children.push((*ty, 0, 0));
+                    if let Term::GlueIntro(_, base, _) = &self.terms.get(TermId::new(position)).term
+                    {
+                        children.push((*base, 0, 0));
+                    }
+                    for (f, body) in branches {
+                        dimensions = dimensions.max(face(f)?);
+                        children.push((*body, 0, 0));
+                    }
+                }
+                Term::Glue(base, branches) => {
+                    children.push((*base, 0, 0));
+                    for (f, ty, equivalence) in branches {
+                        dimensions = dimensions.max(face(f)?);
+                        children.extend([(*ty, 0, 0), (*equivalence, 0, 0)]);
+                    }
+                }
+                Term::Global(_)
+                | Term::U(_)
+                | Term::Bool
+                | Term::True
+                | Term::False
+                | Term::Nat
+                | Term::Zero
+                | Term::Inductive(_)
+                | Term::Constructor(_) => {}
+            }
+            for (child, term_binders, dimension_binders) in children {
+                let (t, d) = scopes
+                    .get(child.index())
+                    .copied()
+                    .ok_or_else(|| Error::plain("invalid syntax DAG in scope validation"))?;
+                terms = terms.max(t.saturating_sub(term_binders));
+                dimensions = dimensions.max(d.saturating_sub(dimension_binders));
+            }
+            scopes.push((terms, dimensions));
+        }
+        let check = |root: TermId, terms: usize, dimensions: usize| -> Result<()> {
+            let &(t, d) = scopes
+                .get(root.index())
+                .ok_or_else(|| Error::plain("invalid scope root"))?;
+            if t > terms {
+                return Err(Error::plain("escaped term variable"));
+            }
+            if d > dimensions {
+                return Err(Error::plain("escaped dimension variable"));
+            }
+            Ok(())
+        };
+        for declaration in &self.decls {
+            check(declaration.ty, 0, 0)?;
+            check(declaration.body, 0, 0)?;
+        }
+        for family in &self.inductives {
+            for (bound, entry) in family.parameters.iter().chain(&family.indices).enumerate() {
+                check(entry.ty, bound, 0)?;
+            }
+        }
+        for constructor in &self.constructors {
+            let parameters = self.inductives[constructor.inductive.index()]
+                .parameters
+                .len();
+            for (bound, entry) in constructor.arguments.iter().enumerate() {
+                check(entry.ty, parameters + bound, 0)?;
+            }
+            for root in &constructor.result_indices {
+                check(*root, parameters + constructor.arguments.len(), 0)?;
+            }
+        }
+        for constructor in &self.higher {
+            let parameters = self.inductives[constructor.inductive.index()]
+                .parameters
+                .len();
+            for (bound, entry) in constructor.arguments.iter().enumerate() {
+                check(entry.ty, parameters + bound, 0)?;
+            }
+            for root in &constructor.result_indices {
+                check(*root, parameters + constructor.arguments.len(), 0)?;
+            }
+            for piece in &constructor.boundary.pieces {
+                if face(&piece.face)? > constructor.dimensions.len() {
+                    return Err(Error::plain("escaped boundary dimension variable"));
+                }
+                check(
+                    piece.term,
+                    parameters + constructor.arguments.len(),
+                    constructor.dimensions.len(),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     /// Validate the trusted, resolved representation of ordinary inductives.
     /// This deliberately accepts only direct recursive arguments. Any nested
     /// occurrence (including an occurrence in a function domain) is rejected.

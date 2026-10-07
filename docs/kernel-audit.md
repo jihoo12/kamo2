@@ -313,3 +313,27 @@ This catches composed flat chains as well as parameter-generated nesting before
 elaboration. Small-stack regressions cover definition/data headers and combined
 application-chain nesting. These limits remain conservative availability guards,
 not a guarantee of bounded stack usage in every kernel operation.
+
+## General core scope validation — 2026-10-07
+
+Review of `bcd1fb46b5b37563f4bebf6953f6ee0f7c871964` found that ordinary
+core path application could carry an escaped dimension past syntax and metadata
+validation. An internal `PApp(Global(0), Bound(0))` in a closed declaration
+panicked during checking in both modes. The frontends prevented that input;
+no public source-level false proof was demonstrated.
+
+Kernel entry now validates scopes after syntax/reference validation and before
+inductive validation or semantic checking. A bottom-up pass computes the free
+term and dimension requirements of each syntax DAG node. The two binder spaces
+are independent. Declaration roots must be closed; metadata roots are checked
+against their explicit telescopes and higher-constructor dimension counts.
+Faces are traversed iteratively and checked in their own ambient scope.
+
+Path families bind a dimension, but endpoints do not. Composition families and
+tube bodies bind a dimension, but faces, the cap, and endpoint dimensions do not.
+Shared nodes retain their free-variable requirements, so use under a binder does
+not certify a later unbound use. Regressions cover escaped and overflowing term/
+dimension indices, faces in systems and Glue forms, composition endpoints/faces,
+path endpoints, shared nodes, and valid ordinary binders. The evaluator continues
+to rely on this checked scope invariant; its indexing is not a standalone API
+for unvalidated core syntax.
