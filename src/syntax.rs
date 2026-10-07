@@ -165,6 +165,121 @@ pub(crate) struct Program {
 }
 
 impl Program {
+    /// Check the syntax DAG and global dependency order before evaluation.
+    /// Frontends may only refer to already checked declarations.
+    pub(crate) fn validate_global_references(&self) -> Result<()> {
+        let mut dependencies: Vec<Option<usize>> = Vec::with_capacity(self.terms.len());
+        for position in 0..self.terms.len() {
+            let mut children = Vec::new();
+            let mut dependency = None;
+            match &self.terms.get(TermId::new(position)).term {
+                Term::Global(index) => {
+                    if *index >= self.decls.len() {
+                        return Err(Error::plain("global reference is out of range"));
+                    }
+                    dependency = Some(*index);
+                }
+                Term::Pi(a, b)
+                | Term::Sigma(a, b)
+                | Term::App(a, b)
+                | Term::Pair(a, b)
+                | Term::Ann(a, b)
+                | Term::Unglue(a, b) => children.extend([*a, *b]),
+                Term::Lam(a)
+                | Term::Fst(a)
+                | Term::Snd(a)
+                | Term::Suc(a)
+                | Term::PLam(a)
+                | Term::PApp(a, _) => children.push(*a),
+                Term::Path(a, b, c) => children.extend([*a, *b, *c]),
+                Term::If(a, b, c, d) | Term::NatElim(a, b, c, d) => {
+                    children.extend([*a, *b, *c, *d])
+                }
+                Term::HigherApp {
+                    parameters,
+                    arguments,
+                    ..
+                } => {
+                    children.extend(parameters);
+                    children.extend(arguments);
+                }
+                Term::Elim {
+                    parameters,
+                    motive,
+                    methods,
+                    indices,
+                    scrutinee,
+                    ..
+                }
+                | Term::HitElim {
+                    parameters,
+                    motive,
+                    methods,
+                    indices,
+                    scrutinee,
+                    ..
+                } => {
+                    children.extend(parameters);
+                    children.push(*motive);
+                    children.extend(methods);
+                    children.extend(indices);
+                    children.push(*scrutinee);
+                }
+                Term::Com {
+                    family, cap, tubes, ..
+                } => {
+                    children.extend([*family, *cap]);
+                    children.extend(tubes.iter().map(|(_, term)| *term));
+                }
+                Term::System(ty, branches) | Term::GlueIntro(ty, _, branches) => {
+                    children.push(*ty);
+                    if let Term::GlueIntro(_, base, _) = &self.terms.get(TermId::new(position)).term
+                    {
+                        children.push(*base);
+                    }
+                    children.extend(branches.iter().map(|(_, term)| *term));
+                }
+                Term::Glue(base, branches) => {
+                    children.push(*base);
+                    for (_, ty, equivalence) in branches {
+                        children.extend([*ty, *equivalence]);
+                    }
+                }
+                Term::Var(_)
+                | Term::U(_)
+                | Term::Bool
+                | Term::True
+                | Term::False
+                | Term::Nat
+                | Term::Zero
+                | Term::Inductive(_)
+                | Term::Constructor(_) => {}
+            }
+            for child in children {
+                if child.index() >= position {
+                    return Err(Error::plain(
+                        "syntax reference is not an earlier arena node",
+                    ));
+                }
+                dependency = dependency.max(dependencies[child.index()]);
+            }
+            dependencies.push(dependency);
+        }
+        for (index, declaration) in self.decls.iter().enumerate() {
+            for root in [declaration.ty, declaration.body] {
+                let dependency = dependencies
+                    .get(root.index())
+                    .ok_or_else(|| Error::plain("declaration syntax reference is out of range"))?;
+                if dependency.is_some_and(|target| target >= index) {
+                    return Err(Error::plain(
+                        "global reference must target an earlier declaration",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validate the trusted, resolved representation of ordinary inductives.
     /// This deliberately accepts only direct recursive arguments. Any nested
     /// occurrence (including an occurrence in a function domain) is rejected.

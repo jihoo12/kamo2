@@ -89,9 +89,13 @@ fn lex(source: &str) -> Result<Vec<Token>> {
 }
 
 pub fn parse(source: &str) -> Result<Program> {
+    if source.len() > crate::MAX_SOURCE_BYTES {
+        return Err(Error::plain("source size budget exceeded"));
+    }
     let mut parser = Parser {
         tokens: lex(source)?,
         index: 0,
+        depth: 0,
     };
     parser.program()
 }
@@ -99,6 +103,7 @@ pub fn parse(source: &str) -> Result<Program> {
 struct Parser {
     tokens: Vec<Token>,
     index: usize,
+    depth: usize,
 }
 
 impl Parser {
@@ -266,6 +271,16 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr> {
+        if self.depth >= 64 {
+            return Err(Error::at(self.offset(), "surface nesting budget exceeded"));
+        }
+        self.depth += 1;
+        let result = self.expr_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn expr_inner(&mut self) -> Result<Expr> {
         if self.peek_name("path") {
             self.index += 1;
             let dimension = self.dimension()?;
@@ -363,6 +378,16 @@ impl Parser {
     }
 
     fn pattern(&mut self) -> Result<Pattern> {
+        if self.depth >= 64 {
+            return Err(Error::at(self.offset(), "surface nesting budget exceeded"));
+        }
+        self.depth += 1;
+        let result = self.pattern_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn pattern_inner(&mut self) -> Result<Pattern> {
         let name = self.name()?;
         let mut arguments = Vec::new();
         loop {
@@ -461,7 +486,12 @@ impl Parser {
 
     fn postfix(&mut self) -> Result<Expr> {
         let mut expr = self.atom()?;
+        let mut chain = 0;
         while self.eat(&TokenKind::At) {
+            chain += 1;
+            if chain > 64 {
+                return Err(Error::at(self.offset(), "surface chain budget exceeded"));
+            }
             expr = Expr::PathApply {
                 path: Box::new(expr),
                 dimension: self.dimension()?,
@@ -472,7 +502,12 @@ impl Parser {
 
     fn application(&mut self) -> Result<Expr> {
         let mut expr = self.postfix()?;
+        let mut chain = 0;
         while self.starts_atom() {
+            chain += 1;
+            if chain > 64 {
+                return Err(Error::at(self.offset(), "surface chain budget exceeded"));
+            }
             let argument = self.postfix()?;
             expr = Expr::Apply {
                 function: Box::new(expr),
@@ -494,8 +529,23 @@ impl Parser {
     }
 
     fn face(&mut self) -> Result<Face> {
+        if self.depth >= 64 {
+            return Err(Error::at(self.offset(), "surface nesting budget exceeded"));
+        }
+        self.depth += 1;
+        let result = self.face_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn face_inner(&mut self) -> Result<Face> {
         let mut face = self.face_and()?;
+        let mut chain = 0;
         while self.eat(&TokenKind::OrOr) {
+            chain += 1;
+            if chain > 64 {
+                return Err(Error::at(self.offset(), "surface chain budget exceeded"));
+            }
             face = Face::Or(Box::new(face), Box::new(self.face_and()?));
         }
         Ok(face)
@@ -503,7 +553,12 @@ impl Parser {
 
     fn face_and(&mut self) -> Result<Face> {
         let mut face = self.face_atom()?;
+        let mut chain = 0;
         while self.eat(&TokenKind::AndAnd) {
+            chain += 1;
+            if chain > 64 {
+                return Err(Error::at(self.offset(), "surface chain budget exceeded"));
+            }
             face = Face::And(Box::new(face), Box::new(self.face_atom()?));
         }
         Ok(face)
@@ -527,6 +582,16 @@ impl Parser {
     }
 
     fn atom(&mut self) -> Result<Expr> {
+        if self.depth >= 64 {
+            return Err(Error::at(self.offset(), "surface nesting budget exceeded"));
+        }
+        self.depth += 1;
+        let result = self.atom_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn atom_inner(&mut self) -> Result<Expr> {
         if self.peek_name("Glue") {
             self.index += 1;
             let base = Box::new(self.postfix()?);
@@ -802,6 +867,7 @@ mod path_tests {
         let mut parser = Parser {
             tokens: lex(source).unwrap(),
             index: 0,
+            depth: 0,
         };
         let expr = parser.expr().unwrap();
         assert_eq!(parser.index, parser.tokens.len());
@@ -916,6 +982,7 @@ mod path_tests {
             let mut parser = Parser {
                 tokens: lex(source).unwrap(),
                 index: 0,
+                depth: 0,
             };
             assert!(parser.expr().is_err(), "{source}");
         }

@@ -14,6 +14,7 @@ mod syntax;
 
 use std::collections::HashSet;
 use std::fmt;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 pub type Result<T> = std::result::Result<T, Error>;
@@ -168,7 +169,25 @@ impl CheckedProgram {
                 return Err(Error::plain("module count budget exceeded"));
             }
             *module_count += 1;
-            let source = std::fs::read_to_string(&path)
+            let input = std::fs::File::open(&path)
+                .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
+            // Bound allocation even for growing files and non-regular inputs.
+            let mut bytes = Vec::new();
+            let remaining = MAX_TRANSITIVE_SOURCE_BYTES.saturating_sub(*total_source_bytes);
+            let limit = MAX_SOURCE_BYTES.min(remaining);
+            input
+                .take(limit as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
+            if bytes.len() > limit {
+                let budget = if limit == MAX_SOURCE_BYTES {
+                    "source size budget exceeded"
+                } else {
+                    "transitive source size budget exceeded"
+                };
+                return Err(Error::plain(format!("{}: {budget}", path.display())));
+            }
+            let source = String::from_utf8(bytes)
                 .map_err(|error| Error::plain(format!("{}: {error}", path.display())))?;
             if source.len() > MAX_SOURCE_BYTES {
                 return Err(Error::plain(format!(
@@ -223,6 +242,7 @@ impl CheckedProgram {
     }
 
     fn check_program(program: syntax::Program, options: Options) -> Result<Self> {
+        program.validate_global_references()?;
         program.validate_inductives()?;
         {
             let mut engine =
@@ -301,5 +321,69 @@ impl CheckedProgram {
         let equal = engine.conv(l, r, Some(lt), face)?;
         let elapsed = start.elapsed();
         Ok((elapsed, engine.statistics(), equal))
+    }
+}
+
+#[cfg(test)]
+mod trust_boundary_tests {
+    use super::*;
+    use crate::arena::Key;
+
+    #[test]
+    fn forged_global_proofs_are_rejected_before_evaluation() {
+        for optimized in [false, true] {
+            for target in [0, 1, usize::MAX] {
+                let mut program = syntax::parse(
+                    "(def bad (Path i Bool true false) (path i true)) (def later Bool true)",
+                )
+                .unwrap();
+                let reference = program.alloc(syntax::Term::Global(target), 0);
+                program.decls[0].body = reference;
+                let error = CheckedProgram::check_program(
+                    program,
+                    Options {
+                        optimized,
+                        ..Default::default()
+                    },
+                )
+                .unwrap_err();
+                assert!(error.message.contains("global reference"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn forged_global_dependencies_in_types_and_nested_terms_are_rejected() {
+        for in_type in [false, true] {
+            let mut program = syntax::parse("(def first Bool true) (def later Bool true)").unwrap();
+            let reference = program.alloc(syntax::Term::Global(1), 0);
+            let nested = program.alloc(syntax::Term::Ann(reference, program.decls[0].ty), 0);
+            if in_type {
+                program.decls[0].ty = nested;
+            } else {
+                program.decls[0].body = nested;
+            }
+            assert!(program.validate_global_references().is_err());
+        }
+    }
+
+    #[test]
+    fn malformed_syntax_edges_and_roots_are_rejected() {
+        let mut program = syntax::parse("(def first Bool true)").unwrap();
+        let cyclic = program.alloc(
+            syntax::Term::Suc(syntax::TermId::new(program.terms.len())),
+            0,
+        );
+        program.decls[0].body = cyclic;
+        assert!(program.validate_global_references().is_err());
+        let mut program = syntax::parse("(def first Bool true)").unwrap();
+        program.decls[0].body = syntax::TermId::new(usize::MAX);
+        assert!(program.validate_global_references().is_err());
+    }
+
+    #[test]
+    fn ordinary_backward_global_dependencies_remain_valid() {
+        CheckedProgram::check("(def first Bool true) (def second Bool first)").unwrap();
+        CheckedProgram::check_surface("def first : Bool = true def second : Bool = first").unwrap();
     }
 }

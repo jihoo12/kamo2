@@ -247,3 +247,39 @@ This rejection is an intentional trusted-core restriction, not an elaborator
 heuristic: future support for aliases in constructor telescopes must first add
 cycle-bounded transparent unfolding to the metadata validator and restore the
 forged-negative-alias regression as an unfolding test.
+
+## Frontend trust-boundary hardening — 2026-10-07
+
+A follow-up review of revision `010f87dedd1e941c9e7ec045c158696e79aa2cb8`
+identified three issues, now covered by permanent regressions:
+
+- The kernel previously relied on both frontends to resolve globals only to
+  earlier declarations. An internal forged core declaration with type
+  `Path i Bool true false` and body `Global(0)` passed checking in both modes.
+  No public source-level way to construct that declaration was found. This
+  nevertheless violated the intended separation between elaboration and
+  trusted validation. Kernel entry now validates the entire syntax arena as a
+  backward-pointing DAG, checks global ranges, and propagates each node's
+  maximum global dependency. Declaration types and bodies must refer only to
+  earlier declarations, before any metadata validation or evaluation begins.
+  This also rejects malformed syntax roots and cyclic syntax references.
+- A 20,023-byte surface source with 10,000 nested parentheses aborted a release
+  CLI on a 2 MiB stack. Surface parsing now limits active recursive expression,
+  atom, pattern, and face frames to 64 and application, path-application, and
+  face connective chains to 64. The public surface parser independently
+  enforces the 4 MiB source limit. Tests exercise parentheses, lets, arrows,
+  projections, application chains, path applications, and faces on a 2 MiB
+  worker stack and require ordinary budget errors.
+- Surface module loading previously allocated the whole file before applying
+  the source limit. It now reads at most the smaller of the per-file budget and
+  remaining transitive budget, plus one byte to detect overflow. The bounded
+  read works without trusting file metadata or assuming a regular file.
+  A sparse oversized imported file is covered by a regression.
+
+The checked public API still exposes neither mutable core syntax nor semantic
+arena IDs. Annotations are checked by the kernel, including values discarded
+by frontend type-head reduction. The trusted implementation includes metadata
+validation, checking, conversion/evaluation, face reasoning, and the native
+Glue/universe/HIT rules; optimized/reference agreement is not an independent
+soundness proof. These fixes do not claim bounded stack usage for every
+recursive checker/evaluator operation or a mechanized soundness theorem.

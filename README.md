@@ -644,3 +644,11 @@ into the kernel.
 
 Kamo2 is licensed under the repository's Apache-2.0 license. The project is
 derived from [Kamo](https://github.com/jihoo12/kamo).
+
+Kernel entry validates global ranges and declaration dependency order independently
+of the frontends: only earlier declarations may be referenced. Syntax arena
+edges must point to earlier nodes. Surface parsing has conservative limits of
+64 active recursive parser frames and 64 links per application or face chain;
+exceeding these limits returns a resource error. Surface module reads are bounded
+before allocating an entire file. See the 2026-10-07 follow-up in
+[`docs/kernel-audit.md`](docs/kernel-audit.md) for regressions and remaining limits.
